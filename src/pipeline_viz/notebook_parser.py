@@ -64,11 +64,7 @@ _WRITE_IDENT_FIRST = re.compile(
 _OPEN_IDENT_FIRST = re.compile(r"\bopen\s*\(\s*(\w+)\s*(?:,|\))", re.IGNORECASE)
 
 # Paths that look like data files (reduce noise from module paths).
-_DATA_EXT = re.compile(
-    r"\.(csv|tsv|parquet|pq|json|jsonl|ndjson|feather|ftr|pkl|pickle|"
-    r"joblib|h5|hdf5|txt|xml|yaml|yml|npz|npy|xlsx|xls|orc|ipc|arrow)$",
-    re.IGNORECASE,
-)
+from pipeline_viz.paths import DATA_EXT as _DATA_EXT
 
 
 def split_notebook_code_cells(nb_path: Path) -> list[str]:
