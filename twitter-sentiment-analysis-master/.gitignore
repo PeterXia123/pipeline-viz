@@ -1,0 +1,5 @@
+kaggle
+*.zip
+*.csv
+**/.ipynb_checkpoints
+twitter-sentiment-analysis

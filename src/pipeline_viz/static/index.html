@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pipeline-viz</title>
+  <script src="https://unpkg.com/vis-network@10.0.2/standalone/umd/vis-network.min.js" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f6f7f9; color: #222; display: flex; flex-direction: column; height: 100vh; }
+    header {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      padding: 10px 14px; background: #fff; border-bottom: 1px solid #e2e4e8;
+    }
+    header label { font-size: 13px; color: #444; }
+    header .page-title { width: 100%; margin: 0 0 4px; font-size: 22px; line-height: 1.2; font-weight: 700; color: #0f172a; }
+    header input[type="text"] {
+      min-width: 200px; flex: 1; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px;
+    }
+    button {
+      padding: 6px 12px; border-radius: 6px; border: 1px solid #bbb;
+      background: #fff; cursor: pointer; font-size: 13px;
+    }
+    button:hover { background: #f0f2f5; }
+    button.primary { background: #1565c0; color: #fff; border-color: #0d47a1; }
+    button.primary:hover { background: #0d47a1; }
+    #main { display: flex; flex: 1; min-height: 0; }
+    #global-history {
+      width: 260px; flex-shrink: 0; border-right: 1px solid #e2e4e8; background: #fff;
+      padding: 10px; overflow: auto; font-size: 13px;
+    }
+    #global-history h3 { margin: 0 0 8px; font-size: 14px; }
+    #global-history .hint { font-size: 11px; color: #666; margin-bottom: 8px; }
+    #history-global-list { list-style: none; padding: 0; margin: 0; }
+    #history-global-list li {
+      margin: 6px 0; padding: 8px; border: 1px solid #e8e8e8; border-radius: 6px; cursor: pointer;
+      background: #fafafa;
+    }
+    #history-global-list li.active { border-color: #1565c0; background: #e3f2fd; }
+    #history-global-list li:hover { background: #eef6ff; }
+    #history-global-list .meta { font-size: 11px; color: #666; word-break: break-all; }
+    #history-global-list .row-actions { margin-top: 6px; display: flex; justify-content: flex-end; }
+    #history-global-list .btn-del-snap {
+      font-size: 11px; padding: 2px 8px; color: #b71c1c; border-color: #e57373; background: #fff;
+    }
+    #history-global-list .btn-del-snap:hover { background: #ffebee; }
+    #center { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    #net { flex: 1; min-height: 0; background: #fafbfc; }
+    #side-panel {
+      width: 280px; flex-shrink: 0; border-left: 1px solid #e2e4e8; background: #fff;
+      padding: 10px 12px; overflow: auto; font-size: 13px; display: none;
+    }
+    #side-panel.visible { display: block; }
+    #side-panel h3 { margin: 0 0 8px; font-size: 14px; }
+    #side-panel .path { color: #555; word-break: break-all; font-size: 12px; margin-bottom: 8px; }
+    #history-list { list-style: none; padding: 0; margin: 0; }
+    #history-list li {
+      margin: 6px 0; padding: 8px; border: 1px solid #e8e8e8; border-radius: 6px; cursor: pointer;
+      background: #fafafa;
+    }
+    #history-list li:hover { background: #eef6ff; border-color: #90caf9; }
+    #history-list .meta { font-size: 11px; color: #666; }
+    .editable-title { font-size: 13px; color: #111; font-weight: 600; margin-bottom: 2px; word-break: break-word; }
+    .editable-desc { font-size: 12px; color: #70757a; margin-bottom: 2px; word-break: break-word; }
+    .editable {
+      border-radius: 4px;
+      padding: 1px 2px;
+      cursor: text;
+    }
+    .editable:hover { background: rgba(0, 0, 0, 0.04); }
+    .inline-edit {
+      width: 100%; font-size: 12px; padding: 3px 6px; border: 1px solid #90caf9; border-radius: 4px;
+    }
+    .hint { font-size: 12px; color: #666; }
+    #toast {
+      position: fixed; bottom: 16px; right: 16px; max-width: 420px;
+      padding: 10px 14px; background: #222; color: #fff; border-radius: 8px;
+      font-size: 13px; display: none; z-index: 10;
+    }
+    #modal-dc, #modal-diff {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    #modal-dc.open, #modal-diff.open { display: flex; }
+    .modal-box {
+      background: #fff; border-radius: 10px; max-width: min(920px, 96vw); max-height: 90vh;
+      width: 100%; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal-head {
+      padding: 12px 16px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;
+    }
+    .modal-head h2 { margin: 0; font-size: 15px; flex: 1; }
+    .modal-body { padding: 12px 16px; overflow: auto; flex: 1; font-size: 12px; line-height: 1.45; }
+    .modal-body pre.dc-report {
+      font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
+      background: #f6f8fa; padding: 10px; border-radius: 6px; max-height: 60vh; overflow: auto;
+    }
+    .dc-merge { margin-bottom: 10px; }
+    .dc-merge label { display: block; font-size: 12px; color: #555; margin-bottom: 4px; }
+    .dc-merge input { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; }
+    .diff-line { white-space: pre-wrap; word-break: break-all; padding: 1px 6px; margin: 0 -6px; font-family: ui-monospace, monospace; }
+    .diff-line.add { background: #e6ffed; }
+    .diff-line.del { background: #ffeef0; }
+    .diff-line.ctx { background: #f6f8fa; color: #444; }
+    .diff-line.hunk { color: #6a737d; background: #fff; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 class="page-title">Pipeline Viz - 全局与文件版本可视化</h1>
+    <label for="root">项目根目录</label>
+    <input id="root" type="text" placeholder="/绝对路径/到你的项目" />
+    <button type="button" id="btn-load">加载图</button>
+    <button type="button" id="btn-save-layout" title="将当前图上全部节点坐标合并保存到浏览器，各全局版本加载时优先使用">保存本地排布</button>
+    <button type="button" id="btn-clear-user-layout" title="清除本项目的本地排布，恢复为服务端默认布局">清除本地排布</button>
+    <button type="button" id="btn-save">保存全局快照</button>
+    <button type="button" id="btn-dc" title="对比 Data 表格：快照 vs 磁盘">DataComPy 对比所选 Data</button>
+    <button type="button" id="btn-run" title="需服务端 PIPELINE_VIZ_ALLOW_RUN=1">运行所选 Notebook</button>
+    <button type="button" id="btn-clear-view">清除全局快照视图</button>
+    <span class="hint">左：全局版本；右：点击节点看文件版本；选中左栏某全局版本时，右侧仅显示该次提交中变更的文件版本；未选左栏则显示全部版本点。「保存本地排布」按当前整张图整批合并写入坐标（换项目根目录为另一套）；连线仍随各版本接口变化。</span>
+  </header>
+  <div id="main">
+    <aside id="global-history">
+      <h3>全局版本</h3>
+      <p class="hint">双击第一行改名称，双击第二行改描述。点条目切换「该次提交」高亮。删除会移除该快照及其中保存的文件副本。</p>
+      <ul id="history-global-list"></ul>
+    </aside>
+    <div id="center">
+      <div id="net"></div>
+    </div>
+    <aside id="side-panel" aria-label="单文件版本历史">
+      <h3>该文件的版本</h3>
+      <div class="path" id="side-path"></div>
+      <p class="hint" id="side-empty" style="display:none">暂无记录，请先「保存全局快照」。</p>
+      <ul id="history-list"></ul>
+    </aside>
+  </div>
+  <div id="modal-dc" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2 id="dc-title">DataComPy</h2>
+        <button type="button" id="dc-close">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="dc-merge">
+          <label for="dc-keys">Merge key（逗号分隔，留空则按行顺序）</label>
+          <input id="dc-keys" type="text" placeholder="例如 id 或 user_id, ts" />
+        </div>
+        <button type="button" class="primary" id="dc-run">运行比较</button>
+        <pre class="dc-report" id="dc-out"></pre>
+      </div>
+    </div>
+  </div>
+  <div id="modal-diff" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2 id="diff-title">Diff</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" id="btn-diff-prev">对比上一快照</button>
+          <button type="button" id="btn-diff-disk">对比磁盘</button>
+          <button type="button" id="diff-close">关闭</button>
+        </div>
+      </div>
+      <div class="modal-body" id="diff-body"></div>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <script>
+    const qs = (s) => document.querySelector(s);
+    const toast = (msg) => {
+      const el = qs("#toast");
+      el.textContent = msg;
+      el.style.display = "block";
+      clearTimeout(window.__tt);
+      window.__tt = setTimeout(() => { el.style.display = "none"; }, 5200);
+    };
+
+    const params = new URLSearchParams(location.search);
+    if (params.get("project_root")) qs("#root").value = params.get("project_root");
+
+    let network = null;
+    let lastSelection = null;
+    /** 与最近一次 /api/graph 响应对齐；右侧文件版本筛选必须用此值，避免与 viewSnapshotId 竞态不同步 */
+    let graphViewSnapshotId = null;
+    let viewSnapshotId = null;
+    let loadGraphSeq = 0;
+    let modalCtx = { path: "", snapshotId: "" };
+
+    async function runNotebookByNodeId(nodeId) {
+      if (!nodeId || !nodeId.startsWith("code:")) {
+        toast("请先选择一个 Code 节点");
+        return;
+      }
+      const path = nodeId.slice("code:".length);
+      if (!path.endsWith(".ipynb")) {
+        toast("仅支持 Notebook（.ipynb）");
+        return;
+      }
+      const ok = window.confirm(`确认运行 Notebook?\n${path}`);
+      if (!ok) return;
+      const u = buildUrl("/api/run-notebook", { notebook_rel: path });
+      const res = await fetch(u, { method: "POST" });
+      if (!res.ok) {
+        toast(await res.text());
+        return;
+      }
+      toast("Notebook 执行完成（若启用）");
+    }
+
+    function buildUrl(path, extra) {
+      const root = qs("#root").value.trim();
+      const u = new URL(path, location.origin);
+      if (root) u.searchParams.set("project_root", root);
+      if (extra) Object.entries(extra).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, v);
+      });
+      return u.toString();
+    }
+
+    const USER_LAYOUT_LS_PREFIX = "pipeline-viz:userLayout:v1:";
+    function userLayoutStorageKey(projectRoot) {
+      const r = String(projectRoot || "").trim();
+      if (!r) return null;
+      return USER_LAYOUT_LS_PREFIX + r;
+    }
+    function loadUserLayoutMap(projectRoot) {
+      const key = userLayoutStorageKey(projectRoot);
+      if (!key) return null;
+      try {
+        const s = localStorage.getItem(key);
+        if (!s) return null;
+        const o = JSON.parse(s);
+        if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+        return o;
+      } catch (_) {
+        return null;
+      }
+    }
+    /** raw: [x,y] 或 {x,y}；缺省用 fallback */
+    function pickXY(raw, fallback) {
+      if (Array.isArray(raw) && raw.length >= 2) {
+        return [Number(raw[0]) || 0, Number(raw[1]) || 0];
+      }
+      if (raw && typeof raw === "object" && ("x" in raw || "y" in raw)) {
+        return [Number(raw.x) || 0, Number(raw.y) || 0];
+      }
+      if (Array.isArray(fallback) && fallback.length >= 2) {
+        return [Number(fallback[0]) || 0, Number(fallback[1]) || 0];
+      }
+      return [0, 0];
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    async function saveSnapshotMeta(snapshotId, patch) {
+      const body = {};
+      if (patch.label !== undefined) body.label = patch.label;
+      if (patch.description !== undefined) body.description = patch.description;
+      const r = await fetch(buildUrl("/api/history/meta", { snapshot_id: snapshotId }), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        toast(await r.text());
+        return null;
+      }
+      return await r.json();
+    }
+
+    function bindInlineEdit(root, selector, onSave) {
+      root.querySelectorAll(selector).forEach((el) => {
+        el.addEventListener("dblclick", (ev) => {
+          ev.stopPropagation();
+          if (el.querySelector("input")) return;
+          const original = el.getAttribute("data-value") || "";
+          const inp = document.createElement("input");
+          inp.className = "inline-edit";
+          inp.value = original;
+          el.innerHTML = "";
+          el.appendChild(inp);
+          inp.focus();
+          inp.select();
+
+          let done = false;
+          const commit = async (save) => {
+            if (done) return;
+            done = true;
+            const value = inp.value.trim();
+            if (save && value !== original) await onSave(el, value);
+            el.setAttribute("data-value", save ? value : original);
+            el.textContent = save ? value : original;
+            if (!el.textContent) el.textContent = save ? "（空）" : "（空）";
+          };
+          inp.addEventListener("keydown", async (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              await commit(true);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              await commit(false);
+            }
+          });
+          inp.addEventListener("blur", async () => commit(true));
+        });
+      });
+    }
+
+    function renderUnifiedDiff(text) {
+      if (!text || !text.trim()) return "<p class=\"hint\">无差异或无可比对文本。</p>";
+      const lines = text.split("\n");
+      let out = "";
+      let oldLn = 0;
+      let newLn = 0;
+      for (const line of lines) {
+        const hm = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (hm) {
+          oldLn = parseInt(hm[1], 10);
+          newLn = parseInt(hm[2], 10);
+        }
+        if (line.startsWith("+++ ") || line.startsWith("--- ") || line.startsWith("@@")) {
+          out += `<div class="diff-line hunk">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith("+")) {
+          out += `<div class="diff-line add">+${newLn} ${escapeHtml(line.slice(1))}</div>`;
+          newLn += 1;
+        } else if (line.startsWith("-")) {
+          out += `<div class="diff-line del">-${oldLn} ${escapeHtml(line.slice(1))}</div>`;
+          oldLn += 1;
+        } else if (line.startsWith(" ")) {
+          out += `<div class="diff-line ctx">${escapeHtml(line)}</div>`;
+          oldLn += 1;
+          newLn += 1;
+        } else {
+          out += `<div class="diff-line ctx">${escapeHtml(line)}</div>`;
+        }
+      }
+      return out;
+    }
+
+    async function openDiff(path, snapshotId, compare) {
+      modalCtx = { path, snapshotId };
+      const u = buildUrl("/api/file/diff", { path, snapshot_id: snapshotId, compare });
+      const res = await fetch(u);
+      if (!res.ok) {
+        toast(await res.text());
+        return;
+      }
+      const j = await res.json();
+      qs("#diff-title").textContent = `${path} · ${compare === "previous" ? "相对上一全局快照" : "该快照 vs 磁盘"}`;
+      qs("#diff-body").innerHTML = j.unchanged
+        ? "<p class=\"hint\">内容相同。</p>"
+        : renderUnifiedDiff(j.unified || "");
+      qs("#modal-diff").classList.add("open");
+    }
+
+    qs("#diff-close").addEventListener("click", () => qs("#modal-diff").classList.remove("open"));
+    qs("#modal-diff").addEventListener("click", (e) => { if (e.target.id === "modal-diff") qs("#modal-diff").classList.remove("open"); });
+    qs("#btn-diff-prev").addEventListener("click", () => {
+      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "previous");
+    });
+    qs("#btn-diff-disk").addEventListener("click", () => {
+      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "current");
+    });
+
+    function isDataNode(id) { return id && id.startsWith("data:"); }
+    function dataPathFromId(id) { return id.slice("data:".length); }
+    function isDataframePath(p) {
+      const low = p.toLowerCase();
+      return [".csv", ".tsv", ".parquet", ".pq", ".pkl", ".pickle"].some((s) => low.endsWith(s));
+    }
+
+    async function showNodeHistory(nodeId) {
+      const panel = qs("#side-panel");
+      const list = qs("#history-list");
+      const empty = qs("#side-empty");
+      const pathEl = qs("#side-path");
+      if (!nodeId) {
+        panel.classList.remove("visible");
+        return;
+      }
+      const q = { node_id: nodeId };
+      // viewSnapshotId 在点选左栏全局版本时同步写入；graphViewSnapshotId 要等 /api/graph 返回。
+      // 若在图加载完成前点击节点，必须用 viewSnapshotId，否则会漏传 view_snapshot_id。
+      const vs = (viewSnapshotId || graphViewSnapshotId || "").trim();
+      if (vs) q.view_snapshot_id = vs;
+      const res = await fetch(buildUrl("/api/node/history", q), { cache: "no-store" });
+      if (!res.ok) {
+        toast(await res.text());
+        return;
+      }
+      const j = await res.json();
+      pathEl.textContent = j.path;
+      list.innerHTML = "";
+      if (!j.entries || !j.entries.length) {
+        empty.style.display = "block";
+        if (j.commit_filtered) {
+          empty.textContent = "此次全局提交未变更该文件（相对上一全局快照内容一致）";
+        } else {
+          empty.textContent = "暂无记录，请先「保存全局快照」。";
+        }
+        panel.classList.add("visible");
+        return;
+      }
+      empty.style.display = "none";
+      j.entries.forEach((ent) => {
+        const li = document.createElement("li");
+        const title = (ent.label && String(ent.label).trim()) ? String(ent.label).trim() : ent.snapshot_id;
+        const desc = (ent.description && String(ent.description).trim())
+          ? String(ent.description).trim()
+          : "双击这里添加描述";
+        li.innerHTML = `
+          <div class="editable editable-title node-name" data-sid="${ent.snapshot_id}" data-value="${escapeAttr(title)}">${escapeHtml(title)}</div>
+          <div class="editable editable-desc node-desc" data-sid="${ent.snapshot_id}" data-value="${escapeAttr((ent.description || "").trim())}">${escapeHtml(desc)}</div>
+          <div class="meta">${escapeHtml(ent.saved_at || "")}</div>
+          <div class="meta">${escapeHtml(ent.snapshot_id || "")}</div>
+        `;
+        li.addEventListener("click", (ev) => {
+          if (ev.target.closest(".editable") || ev.target.closest("input.inline-edit")) return;
+          openDiff(j.path, ent.snapshot_id, "previous");
+        });
+        list.appendChild(li);
+      });
+      bindInlineEdit(list, ".node-name", async (el, value) => {
+        const sid = el.getAttribute("data-sid");
+        const rec = await saveSnapshotMeta(sid, { label: value });
+        if (!rec) return;
+        toast("名称已保存");
+        await refreshGlobalHistory();
+        await showNodeHistory(nodeId);
+      });
+      bindInlineEdit(list, ".node-desc", async (el, value) => {
+        const sid = el.getAttribute("data-sid");
+        const rec = await saveSnapshotMeta(sid, { description: value });
+        if (!rec) return;
+        toast("描述已保存");
+        await refreshGlobalHistory();
+        await showNodeHistory(nodeId);
+      });
+      panel.classList.add("visible");
+    }
+
+    async function deleteGlobalSnapshot(sid) {
+      if (!window.confirm(`确认删除该全局快照？\n${sid}\n该快照内保存的文件副本将一并删除，不可恢复。`)) return;
+      const r = await fetch(buildUrl("/api/history/delete", { snapshot_id: sid }), { method: "POST", cache: "no-store" });
+      if (!r.ok) {
+        toast(await r.text());
+        return;
+      }
+      toast("已删除全局快照");
+      if (viewSnapshotId === sid) {
+        viewSnapshotId = null;
+        graphViewSnapshotId = null;
+      }
+      await refreshGlobalHistory();
+      await loadGraph();
+    }
+
+    async function refreshGlobalHistory() {
+      const res = await fetch(buildUrl("/api/history"));
+      if (!res.ok) return;
+      const j = await res.json();
+      const ul = qs("#history-global-list");
+      ul.innerHTML = "";
+      (j.items || []).forEach((it) => {
+        const li = document.createElement("li");
+        if (viewSnapshotId === it.snapshot_id) li.classList.add("active");
+        const title = (it.label && String(it.label).trim()) ? it.label : it.snapshot_id;
+        const rawDesc = (it.description || "").trim();
+        const desc = rawDesc || "双击这里添加描述";
+        li.innerHTML = `
+          <div class="editable editable-title global-name" data-sid="${it.snapshot_id}" data-value="${escapeAttr(title)}">${escapeHtml(title)}</div>
+          <div class="editable editable-desc global-desc" data-sid="${it.snapshot_id}" data-value="${escapeAttr(rawDesc)}">${escapeHtml(desc)}</div>
+          <div class="meta">${escapeHtml(it.saved_at || "")}</div>
+          <div class="meta">${escapeHtml(it.snapshot_id || "")}</div>
+          <div class="row-actions"><button type="button" class="btn-del-snap" data-sid="${escapeAttr(it.snapshot_id)}">删除快照</button></div>
+        `;
+        li.addEventListener("click", async (ev) => {
+          if (ev.target.closest(".editable") || ev.target.closest("input.inline-edit")) return;
+          if (ev.target.closest(".btn-del-snap")) return;
+          viewSnapshotId = it.snapshot_id;
+          await refreshGlobalHistory();
+          await loadGraph();
+        });
+        ul.appendChild(li);
+      });
+      ul.querySelectorAll(".btn-del-snap").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteGlobalSnapshot(btn.getAttribute("data-sid"));
+        });
+      });
+      bindInlineEdit(ul, ".global-name", async (el, value) => {
+        const sid = el.getAttribute("data-sid");
+        const rec = await saveSnapshotMeta(sid, { label: value });
+        if (!rec) return;
+        toast("名称已保存");
+        await refreshGlobalHistory();
+        if (lastSelection) await showNodeHistory(lastSelection);
+      });
+      bindInlineEdit(ul, ".global-desc", async (el, value) => {
+        const sid = el.getAttribute("data-sid");
+        const rec = await saveSnapshotMeta(sid, { description: value });
+        if (!rec) return;
+        toast("描述已保存");
+        await refreshGlobalHistory();
+        if (lastSelection) await showNodeHistory(lastSelection);
+      });
+    }
+
+    async function loadGraph() {
+      const seq = ++loadGraphSeq;
+      const extra = { _ts: Date.now() };
+      if (viewSnapshotId) extra.view_snapshot_id = viewSnapshotId;
+      /** 请求发出前用户选中的全局版本（左栏），防止响应里 view_snapshot_id 为空时把客户端状态误清空 */
+      const outgoingViewSnapshot = viewSnapshotId;
+      const res = await fetch(buildUrl("/api/graph", extra), { cache: "no-store" });
+      if (!res.ok) {
+        toast(await res.text());
+        return;
+      }
+      const data = await res.json();
+      if (seq !== loadGraphSeq) return;
+      const echoed =
+        data.view_snapshot_id != null && String(data.view_snapshot_id).trim() !== ""
+          ? String(data.view_snapshot_id).trim()
+          : null;
+      // 优先用服务端回显；若未回显但本次请求确实带了 view，则保留 outgoing（避免 viewSnapshotId 被清成 null）
+      graphViewSnapshotId = echoed || outgoingViewSnapshot || null;
+      viewSnapshotId = graphViewSnapshotId;
+      const g = data.graph;
+      const pos = data.positions || {};
+      const hi = data.highlights || {};
+      const ehi = data.edge_highlights || {};
+      const hc = data.highlight_counts || {};
+      const nbSpans = data.notebook_spans || {};
+      const missing = new Set(data.missing_node_ids || []);
+      const layoutRoot = String(data.project_root || qs("#root").value.trim() || "");
+      const userLayout = loadUserLayoutMap(layoutRoot) || {};
+
+      const callCountByNb = {};
+      g.edges.forEach((e) => {
+        if (e.kind === "notebook_call") {
+          callCountByNb[e.source] = (callCountByNb[e.source] || 0) + 1;
+        }
+      });
+
+      const nodes = g.nodes.map((n) => {
+        const serverXY = pos[n.id] || [0, 0];
+        const [x, y] = pickXY(userLayout[n.id], serverXY);
+        const hl = hi[n.id];
+        const kind = n.kind || "notebook";
+        const nPy = kind === "notebook" ? (callCountByNb[n.id] || 0) : 0;
+        const baseColor =
+          hl
+            ? { background: hl, border: viewSnapshotId ? "#b71c1c" : "#2e7d32" }
+            : kind === "notebook"
+              ? { background: "#e8f5e9", border: "#1b5e20" }
+              : kind === "python"
+                ? { background: "#e3f2fd", border: "#1565c0" }
+                : { background: "#e8f5e9", border: "#1b5e20" }; // data 也用绿色系
+
+        const node = {
+          id: n.id,
+          label: n.label,
+          title: n.path + (data.history_count ? "\n点击节点 → 右侧「该文件的版本」" : ""),
+          x, y,
+          fixed: false,
+          shape: kind === "data" ? "dot" : "box",
+          size: kind === "data" ? 22 : undefined,
+          color: {
+            ...baseColor,
+            highlight: { ...baseColor },
+            hover: { ...baseColor },
+          },
+          borderWidth: kind === "notebook" ? 4 : kind === "python" ? 2 : 1,
+          font: { size: kind === "notebook" ? 15 : 14 },
+        };
+
+        if (kind === "notebook" && nbSpans[n.id]) {
+          const sp = nbSpans[n.id];
+          node.height = Math.max(56, (sp.box_height || 0) + 32);
+          node.width = 152;
+        } else if (kind === "notebook" && nPy > 0) {
+          node.height = Math.max(56, nPy * 80 + 28);
+          node.width = 148;
+        }
+
+        // 磁盘缺失：data 用椭圆+虚线；code 保持 box，仅加虚线边框（与绿/蓝高亮语义并行，棕色描边提示缺失）
+        if (missing.has(n.id)) {
+          if (kind === "data") {
+            node.shape = "ellipse";
+            delete node.size;
+            node.width = 50;
+            node.height = 36;
+          }
+          node.shapeProperties = { borderDashes: [8, 5] };
+          node.borderWidth = Math.max(3, node.borderWidth || 1);
+          const missColor = { ...baseColor, border: hl ? baseColor.border : "#6d4c41" };
+          node.color = {
+            ...missColor,
+            highlight: { ...missColor },
+            hover: { ...missColor },
+          };
+          const missHint =
+            kind === "data"
+              ? "[磁盘不存在：运行 notebook 后可能生成或依赖该文件]"
+              : "[磁盘不存在：双击运行 notebook 可能失败]";
+          node.title = `${n.path}\n${missHint}`;
+        }
+        return node;
+      });
+
+      const bezier = { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.35 };
+      const edges = g.edges.map((e) => {
+        const isCall = e.kind === "notebook_call";
+        const key = `${e.source}|${e.target}|${e.kind}`;
+        const hlEdge = ehi[key];
+        return {
+          from: e.source,
+          to: e.target,
+          arrows: isCall ? { to: { enabled: false } } : "to",
+          color: { color: hlEdge ? hlEdge : (isCall ? "#444" : "#789") },
+          width: hlEdge ? 3.5 : (isCall ? 2.5 : 1.5),
+          smooth: isCall ? false : bezier,
+        };
+      });
+
+      if (network) {
+        try {
+          network.destroy();
+        } catch (_) {
+          /* stale instance should not block recreate */
+        }
+        network = null;
+      }
+      const oldNet = qs("#net");
+      const container = document.createElement("div");
+      container.id = "net";
+      oldNet.parentNode.replaceChild(container, oldNet);
+
+      const netOpts = {
+        physics: { enabled: false },
+        interaction: { hover: true, multiselect: false, dragNodes: true, dragView: true },
+        edges: { smooth: bezier },
+      };
+      const nodeRows = nodes.map((n) => ({ ...n }));
+      const edgeRows = edges.map((e) => ({ ...e }));
+      network = new vis.Network(
+        container,
+        { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) },
+        netOpts,
+      );
+      network.setData({
+        nodes: new vis.DataSet(nodeRows),
+        edges: new vis.DataSet(edgeRows),
+      });
+      const layoutSeq = seq;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!network || layoutSeq !== loadGraphSeq) return;
+          try {
+            network.fit({ padding: 40, animation: false });
+          } catch (_) {
+            /* ignore */
+          }
+        });
+      });
+
+      network.on("click", (p) => {
+        lastSelection = p.nodes[0] || null;
+        if (lastSelection) showNodeHistory(lastSelection);
+        else qs("#side-panel").classList.remove("visible");
+      });
+      network.on("doubleClick", (p) => {
+        const nodeId = p.nodes && p.nodes.length ? p.nodes[0] : null;
+        if (!nodeId) return;
+        runNotebookByNodeId(nodeId);
+      });
+
+      const mode = viewSnapshotId
+        ? `查看全局提交 ${viewSnapshotId.slice(0, 22)}…`
+        : "相对最新全局快照";
+      const nodeHiN = (hc.node != null) ? hc.node : Object.keys(hi || {}).length;
+      const edgeHiN = (hc.edge != null) ? hc.edge : Object.keys(ehi || {}).length;
+      const dbg = data.highlight_debug || {};
+      const dbgLine =
+        dbg.view_snapshot_id
+          ? ` · 对比上一快照=${dbg.previous_snapshot_id_for_view ? String(dbg.previous_snapshot_id_for_view).slice(0, 18) + "…" : "（首条，无变更高亮）"}`
+          : "";
+      toast(`已加载 · 全局快照 ${data.history_count || 0} · ${mode} · 高亮节点 ${nodeHiN} / 边 ${edgeHiN}${dbgLine}`);
+      refreshGlobalHistory();
+      if (lastSelection) await showNodeHistory(lastSelection);
+    }
+
+    qs("#btn-save-layout").addEventListener("click", () => {
+      const root = qs("#root").value.trim();
+      if (!root) {
+        toast("请先填写项目根目录");
+        return;
+      }
+      if (!network) {
+        toast("请先加载图");
+        return;
+      }
+      try {
+        const cur = network.getPositions();
+        const key = userLayoutStorageKey(root);
+        if (!key) {
+          toast("项目根目录无效");
+          return;
+        }
+        const prev = loadUserLayoutMap(root) || {};
+        const next = { ...prev };
+        let n = 0;
+        for (const [id, xy] of Object.entries(cur)) {
+          next[id] = [Number(xy.x) || 0, Number(xy.y) || 0];
+          n += 1;
+        }
+        localStorage.setItem(key, JSON.stringify(next));
+        toast(`已保存本地排布：本次整批写入 ${n} 个节点，并与已有记录合并（共 ${Object.keys(next).length} 个 id）`);
+      } catch (e) {
+        toast("保存本地排布失败：" + (e && e.message ? e.message : String(e)));
+      }
+    });
+    qs("#btn-clear-user-layout").addEventListener("click", () => {
+      const root = qs("#root").value.trim();
+      if (!root) {
+        toast("请先填写项目根目录");
+        return;
+      }
+      const key = userLayoutStorageKey(root);
+      if (!key) return;
+      if (!window.confirm("确认清除该项目的「本地排布」？下次加载将使用服务端默认坐标。")) return;
+      localStorage.removeItem(key);
+      toast("已清除本地排布");
+      loadGraph();
+    });
+
+    qs("#btn-load").addEventListener("click", loadGraph);
+    qs("#btn-clear-view").addEventListener("click", () => {
+      viewSnapshotId = null;
+      graphViewSnapshotId = null;
+      loadGraph();
+    });
+
+    qs("#btn-save").addEventListener("click", async () => {
+      const res = await fetch(buildUrl("/api/snapshot/save"), { method: "POST", cache: "no-store" });
+      if (!res.ok) { toast(await res.text()); return; }
+      const j = await res.json();
+      if (j.skipped) {
+        toast(
+          j.message
+            || "未保存：相对上一全局快照无变化（请硬刷新页面以更新提示文案；并确认项目根目录与已保存文件）。",
+        );
+        return;
+      }
+      toast(`已保存全局快照 ${j.snapshot_id}（已标红本次变更文件）`);
+      viewSnapshotId = j.snapshot_id; // 保存后自动切到该版本，显示相对上一版本的变更
+      loadGraph();
+    });
+
+    qs("#dc-close").addEventListener("click", () => qs("#modal-dc").classList.remove("open"));
+    qs("#modal-dc").addEventListener("click", (e) => { if (e.target.id === "modal-dc") qs("#modal-dc").classList.remove("open"); });
+
+    qs("#btn-dc").addEventListener("click", () => {
+      if (!lastSelection || !isDataNode(lastSelection)) {
+        toast("请先点击一个 Data 节点（圆点）");
+        return;
+      }
+      const p = dataPathFromId(lastSelection);
+      if (!isDataframePath(p)) {
+        toast("仅支持 csv / tsv / parquet / pkl 等表格文件");
+        return;
+      }
+      qs("#dc-title").textContent = "DataComPy: " + p;
+      qs("#dc-out").textContent = "";
+      qs("#modal-dc").classList.add("open");
+      window.__dcPath = p;
+    });
+
+    qs("#dc-run").addEventListener("click", async () => {
+      const path = window.__dcPath;
+      const keys = qs("#dc-keys").value.trim();
+      const extra = { path, merge_keys: keys };
+      qs("#dc-out").textContent = "计算中…";
+      const res = await fetch(buildUrl("/api/data/datacompy", extra));
+      const text = await res.text();
+      let body;
+      try { body = JSON.parse(text); } catch (_) { qs("#dc-out").textContent = text; return; }
+      if (!res.ok) {
+        qs("#dc-out").textContent = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body);
+        return;
+      }
+      qs("#dc-out").textContent = body.report || JSON.stringify(body, null, 2);
+    });
+
+    qs("#btn-run").addEventListener("click", async () => {
+      runNotebookByNodeId(lastSelection);
+    });
+
+    loadGraph();
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# 与解析器结果合并；此处仅补充「纯 manifest、无代码线索」的一条边，便于测合并逻辑
+project_root: "."
+codes:
+  - path: notebooks/extra/manifest_only.ipynb
+    inputs:
+      - data/aux/readme_stub.txt
+    outputs:
+      - data/aux/derived_note.txt

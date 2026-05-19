@@ -1,0 +1,8 @@
+# 与 .ipynb 扫描结果合并：manifest 中的路径优先生效，并与解析器结果取并集
+project_root: "."
+codes:
+  - path: notebooks/etl.ipynb
+    inputs:
+      - data/raw/in.csv
+    outputs:
+      - data/out/out.csv

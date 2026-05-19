@@ -1,0 +1,8 @@
+# 故意声明 orphan，但若 notebook 未 import，图中仍不应出现 orphan 节点
+project_root: "."
+codes:
+  - path: lib/orphan.py
+    inputs:
+      - data/ghost.csv
+    outputs:
+      - data/ghost_out.csv

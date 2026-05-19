@@ -1,0 +1,32 @@
+[project]
+name = "pipeline-viz"
+version = "0.1.0"
+description = "Notebook-centric pipeline graph: YAML manifest + .ipynb parsing, layered vis-network UI"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "networkx>=3.2",
+  "nbformat>=5.10",
+  "pyyaml>=6.0",
+  "pydantic>=2.6",
+  "pandas>=2.0",
+  "datacompy>=0.14",
+]
+
+[project.scripts]
+pipeline-viz = "pipeline_viz.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pipeline_viz = ["static/*"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+parquet = ["pyarrow>=14.0.0"]

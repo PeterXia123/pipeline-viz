@@ -1,0 +1,7 @@
+project_root: "."
+codes:
+  - path: notebooks/run.ipynb
+    inputs:
+      - data/in.csv
+    outputs:
+      - data/out/result.csv

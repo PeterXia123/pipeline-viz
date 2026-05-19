@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "order_id": "o1",
+      "customer_id": "c1",
+      "amount": 120.5,
+      "sku": "A1",
+      "region": "EMEA",
+      "segment": "retail",
+      "timezone": "UTC+1",
+      "amount_log": 4.799914262780603,
+      "high_value": 1
+    },
+    {
+      "order_id": "o2",
+      "customer_id": "c1",
+      "amount": 40.0,
+      "sku": "A2",
+      "region": "EMEA",
+      "segment": "retail",
+      "timezone": "UTC+1",
+      "amount_log": 3.713572066704308,
+      "high_value": 0
+    },
+    {
+      "order_id": "o3",
+      "customer_id": "c2",
+      "amount": 900.0,
+      "sku": "B1",
+      "region": "APAC",
+      "segment": "enterprise",
+      "timezone": "UTC+8",
+      "amount_log": 6.803505257608338,
+      "high_value": 1
+    },
+    {
+      "order_id": "o4",
+      "customer_id": "c3",
+      "amount": 15.0,
+      "sku": "A1",
+      "region": NaN,
+      "segment": "retail",
+      "timezone": "UTC-5",
+      "amount_log": 2.772588722239781,
+      "high_value": 0
+    }
+  ],
+  "pipeline": "ccds_ds"
+}

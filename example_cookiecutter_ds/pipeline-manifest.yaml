@@ -1,0 +1,8 @@
+# Cookiecutter-style example: supplement parser-only edges and document pipeline intent
+project_root: "."
+codes:
+  - path: notebooks/04_report.ipynb
+    inputs:
+      - models/metrics.csv
+    outputs:
+      - reports/metrics.json

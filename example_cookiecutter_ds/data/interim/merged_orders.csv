@@ -1,0 +1,5 @@
+order_id,customer_id,amount,sku,region,segment,timezone
+o1,c1,120.5,A1,EMEA,retail,UTC+1
+o2,c1,40.0,A2,EMEA,retail,UTC+1
+o3,c2,900.0,B1,APAC,enterprise,UTC+8
+o4,c3,15.0,A1,,retail,UTC-5
