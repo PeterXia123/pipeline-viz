@@ -115,3 +115,27 @@ def test_precheck_non_dataframe_file(tmp_path: Path):
     assert cf["is_dataframe"] is False
     assert cf["file_size_old"] > 0
     assert cf["file_size_new"] > 0
+
+
+from pipeline_viz.main import api_snapshot_review_compare
+
+
+def test_review_compare_returns_datacompy_result(tmp_path: Path):
+    csv = "data/orders.csv"
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / csv).write_text("id,amount\n1,10\n2,20\n", encoding="utf-8")
+
+    p = GraphPayload(
+        nodes=[GraphNode(id=data_id(csv), kind="data", label="orders.csv", path=csv)],
+        edges=[],
+    )
+    save_snapshot(tmp_path, p)
+    (tmp_path / csv).write_text("id,amount\n1,10\n2,25\n3,30\n", encoding="utf-8")
+
+    result = api_snapshot_review_compare(
+        path=csv,
+        project_root=str(tmp_path),
+        merge_keys="id",
+    )
+    assert "report" in result
+    assert result["matches"] is False

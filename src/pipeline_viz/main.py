@@ -636,6 +636,36 @@ def api_data_datacompy(
     return result
 
 
+@app.get("/api/snapshot/review-compare")
+def api_snapshot_review_compare(
+    path: str = Query(..., description="相对项目根的数据文件路径"),
+    project_root: Optional[str] = Query(default=None),
+    merge_keys: str = Query("", description="逗号分隔的 merge key"),
+):
+    root = _resolve_root(project_root)
+    rel = path.replace("\\", "/").lstrip("/")
+    if not is_dataframe_file(rel):
+        raise HTTPException(400, "仅支持 DataFrame 格式文件")
+
+    disk = (root / rel).resolve()
+    if not is_under_root(root, disk) or not disk.is_file():
+        raise HTTPException(400, "磁盘上不存在该文件")
+
+    latest = load_latest(root)
+    if not latest:
+        raise HTTPException(400, "尚无全局快照")
+
+    blob = read_blob(root, latest.snapshot_id, rel)
+    if blob is None:
+        raise HTTPException(404, "该快照中未保存此文件")
+
+    keys = [k.strip() for k in merge_keys.split(",") if k.strip()]
+    result = compare_snapshot_blob_to_disk(blob, rel, disk, keys if keys else None)
+    if result.get("error"):
+        raise HTTPException(400, str(result["error"]))
+    return result
+
+
 @app.get("/api/snapshot/pre-check")
 def api_snapshot_precheck(project_root: Optional[str] = Query(default=None)):
     root = _resolve_root(project_root)
