@@ -597,6 +597,21 @@ def api_snapshot_latest(project_root: Optional[str] = Query(default=None)):
     return {"snapshot": prev.model_dump()}
 
 
+@app.get("/api/snapshot/data-diffs")
+def api_snapshot_data_diffs(
+    snapshot_id: str = Query(..., description="快照 ID"),
+    project_root: Optional[str] = Query(default=None),
+):
+    root = _resolve_root(project_root)
+    rec = load_snapshot(root, snapshot_id)
+    if not rec:
+        raise HTTPException(404, "snapshot not found")
+    return {
+        "snapshot_id": snapshot_id,
+        "data_diffs": rec.data_diffs,
+    }
+
+
 @app.get("/api/data/datacompy")
 def api_data_datacompy(
     path: str = Query(..., description="相对项目根的路径"),

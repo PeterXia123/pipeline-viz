@@ -412,7 +412,16 @@
       return out;
     }
 
+    async function showStoredDataDiff(snapshotId, nodePath) {
+      const res = await fetch(buildUrl("/api/snapshot/data-diffs", { snapshot_id: snapshotId }));
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data.data_diffs || {})[nodePath] || null;
+    }
+
     async function openDiff(path, snapshotId, compare) {
+      qs("#btn-diff-prev").style.display = "";
+      qs("#btn-diff-disk").style.display = "";
       modalCtx = { path, snapshotId };
       const u = buildUrl("/api/file/diff", { path, snapshot_id: snapshotId, compare });
       const res = await fetch(u);
@@ -509,6 +518,41 @@
         toast("描述已保存");
         await showNodeHistory(nodeId);
       });
+      // Show stored data diff button if viewing a snapshot
+      if (graphViewSnapshotId && nodeId.startsWith("data:")) {
+        const nodePath = nodeId.slice("data:".length);
+        const stored = await showStoredDataDiff(graphViewSnapshotId, nodePath);
+        if (stored) {
+          const diffBtn = document.createElement("button");
+          diffBtn.textContent = "查看数据审查";
+          diffBtn.style.cssText = "margin-top:8px;width:100%;";
+          diffBtn.className = "primary";
+          diffBtn.addEventListener("click", () => {
+            const body = qs("#diff-body");
+            let html = `<h3 style="margin:0 0 12px;font-size:14px">${escapeHtml(nodePath)} — 保存时的数据审查</h3>`;
+            if (stored.schema_diff) {
+              const sd = stored.schema_diff;
+              html += `<div style="margin-bottom:12px;font-size:13px">`;
+              if (sd.row_count_old != null) html += `行数: ${sd.row_count_old} → ${sd.row_count_new}<br>`;
+              if (sd.columns_added && sd.columns_added.length) html += `列新增: <b>${escapeHtml(sd.columns_added.join(", "))}</b><br>`;
+              if (sd.columns_removed && sd.columns_removed.length) html += `列删除: <b>${escapeHtml(sd.columns_removed.join(", "))}</b><br>`;
+              html += `</div>`;
+            }
+            if (stored.datacompy_report) {
+              html += `<pre style="white-space:pre-wrap;word-break:break-word;background:#f6f8fa;padding:10px;border-radius:6px;max-height:50vh;overflow:auto">${escapeHtml(stored.datacompy_report)}</pre>`;
+            }
+            if (!stored.schema_diff && !stored.datacompy_report) {
+              html += `<p class="hint">该文件已审查确认（非 DataFrame 格式或无详细报告）</p>`;
+            }
+            body.innerHTML = html;
+            qs("#diff-title").textContent = `${nodePath} · 快照数据审查`;
+            qs("#btn-diff-prev").style.display = "none";
+            qs("#btn-diff-disk").style.display = "none";
+            qs("#modal-diff").classList.add("open");
+          });
+          list.parentElement.insertBefore(diffBtn, list.nextSibling);
+        }
+      }
       panel.classList.add("visible");
     }
 
