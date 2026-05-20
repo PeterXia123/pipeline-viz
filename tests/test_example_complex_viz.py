@@ -1,4 +1,4 @@
-"""example_complex_viz：多段 py、扇入/扇出、链式 data、无 I/O 的 helper。"""
+"""example_good：多段 py、扇入/扇出、链式 data、无 I/O 的 helper。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +7,7 @@ from pipeline_viz.graph_builder import build_graph
 from pipeline_viz.layout import layered_positions
 from pipeline_viz.paths import code_id, data_id
 
-ROOT = Path(__file__).resolve().parent.parent / "example_complex_viz"
+ROOT = Path(__file__).resolve().parent.parent / "example_good"
 MANIFEST = ROOT / "pipeline-manifest.yaml"
 
 

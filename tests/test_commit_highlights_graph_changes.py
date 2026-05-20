@@ -88,7 +88,7 @@ def test_commit_highlights_marks_graph_only_changes(tmp_path: Path):
     _write_snapshot(tmp_path, s2)
 
     hi = commit_highlights(tmp_path, "S2", p2)
-    assert "data:data/product.csv" in hi  # 新节点应被标红
+    assert "data:data/product.csv" not in hi  # 图结构变化不标红节点，只标红边
 
     ehi = commit_edge_highlights(tmp_path, "S2", p2)
     assert ehi.get("data:data/product.csv|code:notebooks/a.ipynb|input") == "#b71c1c"

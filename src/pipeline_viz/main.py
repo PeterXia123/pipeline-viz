@@ -271,9 +271,17 @@ def api_graph(
     pos = layout["positions"]
     prev = load_latest(root)
 
+    new_node_ids: list[str] = []
     if view_snapshot_id:
         highlights = commit_highlights(root, view_snapshot_id, payload)
         edge_highlights = commit_edge_highlights(root, view_snapshot_id, payload)
+        prev_sid = previous_snapshot_id(root, view_snapshot_id)
+        if prev_sid:
+            prev_rec = load_snapshot(root, prev_sid)
+            prev_node_ids = {n.id for n in prev_rec.payload.nodes} if prev_rec else set()
+            new_node_ids = [n.id for n in payload.nodes if n.id not in prev_node_ids and n.kind == "data"]
+        else:
+            new_node_ids = [n.id for n in payload.nodes if n.kind == "data"]
     else:
         highlights = diff_highlights(payload, prev.payload if prev else None)
         edge_highlights = diff_edge_highlights(payload, prev.payload if prev else None)
@@ -315,6 +323,7 @@ def api_graph(
         "history_count": len(hist),
         "view_snapshot_id": view_snapshot_id,
         "missing_node_ids": missing_node_ids,
+        "new_node_ids": new_node_ids,
     }
 
 
@@ -586,6 +595,61 @@ def api_file_diff(
     prev_txt = _blob_utf8_text(root, prev_id, rel) if prev_id else ""
     curr_txt = _blob_utf8_text(root, snapshot_id, rel)
     return diff_pair_for_display(rel, prev_txt, curr_txt)
+
+
+@app.get("/api/file/schema-diff")
+def api_file_schema_diff(
+    path: str = Query(..., description="相对项目根的路径"),
+    snapshot_id: str = Query(..., description="作为「新」侧的快照 id"),
+    project_root: Optional[str] = Query(default=None),
+    compare: str = Query(
+        "previous",
+        description="previous: 与上一全局快照对比；current: 该快照 vs 当前磁盘",
+    ),
+):
+    root = _resolve_root(project_root)
+    if compare not in ("previous", "current"):
+        raise HTTPException(400, "compare must be previous or current")
+    rel = path.replace("\\", "/").lstrip("/")
+    rec = load_snapshot(root, snapshot_id)
+    if not rec:
+        raise HTTPException(404, "snapshot not found")
+
+    suffix = Path(rel).suffix
+
+    if compare == "current":
+        snap_blob = read_blob(root, snapshot_id, rel)
+        old_profile = (
+            extract_profile_from_bytes(snap_blob, suffix)
+            if snap_blob
+            else {"row_count": None, "col_count": None, "columns": [], "dtypes": {}, "file_size": 0, "format": "missing", "error": "no blob"}
+        )
+        new_profile = extract_profile(root / rel)
+    else:
+        prev_id = previous_snapshot_id(root, snapshot_id)
+        if prev_id:
+            prev_blob = read_blob(root, prev_id, rel)
+            old_profile = (
+                extract_profile_from_bytes(prev_blob, suffix)
+                if prev_blob
+                else {"row_count": None, "col_count": None, "columns": [], "dtypes": {}, "file_size": 0, "format": "missing", "error": "no blob"}
+            )
+        else:
+            old_profile = {"row_count": None, "col_count": None, "columns": [], "dtypes": {}, "file_size": 0, "format": "new_file", "error": None}
+        curr_blob = read_blob(root, snapshot_id, rel)
+        new_profile = (
+            extract_profile_from_bytes(curr_blob, suffix)
+            if curr_blob
+            else {"row_count": None, "col_count": None, "columns": [], "dtypes": {}, "file_size": 0, "format": "missing", "error": "no blob"}
+        )
+
+    schema_diff = compute_schema_diff(old_profile, new_profile)
+    return {
+        "old_profile": old_profile,
+        "new_profile": new_profile,
+        "schema_diff": schema_diff,
+        "is_dataframe": is_dataframe_format(rel) and old_profile.get("error") is None and new_profile.get("error") is None,
+    }
 
 
 @app.get("/api/snapshot/latest")

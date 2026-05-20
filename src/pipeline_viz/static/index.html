@@ -138,6 +138,16 @@
     .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
     .footer-hint { font-size: 12px; color: #888; }
     .progress-text { font-size: 13px; color: #555; }
+    .schema-diff { padding: 8px 0; }
+    .schema-table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+    .schema-table td { padding: 6px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+    .schema-table td:first-child { font-weight: 600; color: #555; width: 80px; }
+    .schema-table td:nth-child(3) { text-align: center; color: #999; width: 30px; }
+    .schema-section { margin-bottom: 8px; font-size: 13px; }
+    .schema-added { color: #2e7d32; }
+    .schema-removed { color: #b71c1c; text-decoration: line-through; }
+    .schema-section ul { margin: 4px 0 0 20px; padding: 0; }
+    .schema-section li { margin-bottom: 2px; }
   </style>
 </head>
 <body>
@@ -419,10 +429,70 @@
       return (data.data_diffs || {})[nodePath] || null;
     }
 
-    async function openDiff(path, snapshotId, compare) {
+    function renderSchemaDiff(data) {
+      const d = data.schema_diff;
+      const op = data.old_profile;
+      const np = data.new_profile;
+      let h = '<div class="schema-diff">';
+
+      h += '<table class="schema-table"><tbody>';
+      h += `<tr><td>格式</td><td>${escapeHtml(op.format || "—")}</td><td>→</td><td>${escapeHtml(np.format || "—")}</td></tr>`;
+      h += `<tr><td>文件大小</td><td>${formatFileSize(d.file_size_old)}</td><td>→</td><td>${formatFileSize(d.file_size_new)}</td></tr>`;
+
+      if (d.row_count_old != null || d.row_count_new != null) {
+        const rc_old = d.row_count_old != null ? d.row_count_old.toLocaleString() : "—";
+        const rc_new = d.row_count_new != null ? d.row_count_new.toLocaleString() : "—";
+        const delta = (d.row_count_old != null && d.row_count_new != null)
+          ? ` (${d.row_count_new - d.row_count_old >= 0 ? "+" : ""}${(d.row_count_new - d.row_count_old).toLocaleString()})`
+          : "";
+        h += `<tr><td>行数</td><td>${rc_old}</td><td>→</td><td>${rc_new}${delta}</td></tr>`;
+      }
+
+      if (d.col_count_old != null || d.col_count_new != null) {
+        h += `<tr><td>列数</td><td>${d.col_count_old ?? "—"}</td><td>→</td><td>${d.col_count_new ?? "—"}</td></tr>`;
+      }
+      h += '</tbody></table>';
+
+      if (d.columns_added && d.columns_added.length > 0) {
+        h += `<div class="schema-section"><strong>新增列：</strong> <span class="schema-added">${d.columns_added.map(escapeHtml).join(", ")}</span></div>`;
+      }
+      if (d.columns_removed && d.columns_removed.length > 0) {
+        h += `<div class="schema-section"><strong>删除列：</strong> <span class="schema-removed">${d.columns_removed.map(escapeHtml).join(", ")}</span></div>`;
+      }
+      if (d.type_changes && Object.keys(d.type_changes).length > 0) {
+        h += '<div class="schema-section"><strong>类型变化：</strong><ul>';
+        for (const [col, tc] of Object.entries(d.type_changes)) {
+          h += `<li><code>${escapeHtml(col)}</code>: ${escapeHtml(tc.old)} → ${escapeHtml(tc.new)}</li>`;
+        }
+        h += '</ul></div>';
+      }
+
+      if ((!d.columns_added || d.columns_added.length === 0) &&
+          (!d.columns_removed || d.columns_removed.length === 0) &&
+          (!d.type_changes || Object.keys(d.type_changes).length === 0) &&
+          d.row_count_old === d.row_count_new && d.file_size_old === d.file_size_new) {
+        h += '<p class="hint">Schema 相同，无变化。</p>';
+      }
+
+      h += '</div>';
+      return h;
+    }
+
+    async function openDiff(path, snapshotId, compare, isData) {
       qs("#btn-diff-prev").style.display = "";
       qs("#btn-diff-disk").style.display = "";
-      modalCtx = { path, snapshotId };
+      modalCtx = { path, snapshotId, isData: !!isData };
+      if (isData) {
+        const u = buildUrl("/api/file/schema-diff", { path, snapshot_id: snapshotId, compare });
+        const res = await fetch(u);
+        if (!res.ok) { toast(await res.text()); return; }
+        const data = await res.json();
+        qs("#diff-title").textContent = `${path} · ${compare === "previous" ? "相对上一全局快照" : "该快照 vs 磁盘"} (Schema)`;
+        qs("#diff-body").innerHTML = renderSchemaDiff(data);
+        qs("#modal-diff").classList.add("open");
+        return;
+      }
+
       const u = buildUrl("/api/file/diff", { path, snapshot_id: snapshotId, compare });
       const res = await fetch(u);
       if (!res.ok) {
@@ -440,10 +510,10 @@
     qs("#diff-close").addEventListener("click", () => qs("#modal-diff").classList.remove("open"));
     qs("#modal-diff").addEventListener("click", (e) => { if (e.target.id === "modal-diff") qs("#modal-diff").classList.remove("open"); });
     qs("#btn-diff-prev").addEventListener("click", () => {
-      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "previous");
+      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "previous", modalCtx.isData);
     });
     qs("#btn-diff-disk").addEventListener("click", () => {
-      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "current");
+      if (modalCtx.path && modalCtx.snapshotId) openDiff(modalCtx.path, modalCtx.snapshotId, "current", modalCtx.isData);
     });
 
     function isDataNode(id) { return id && id.startsWith("data:"); }
@@ -500,7 +570,7 @@
         `;
         li.addEventListener("click", (ev) => {
           if (ev.target.closest(".editable") || ev.target.closest("input.inline-edit")) return;
-          openDiff(j.path, ent.snapshot_id, "previous");
+          openDiff(j.path, ent.snapshot_id, "previous", isDataNode(nodeId));
         });
         list.appendChild(li);
       });
@@ -519,6 +589,7 @@
         await showNodeHistory(nodeId);
       });
       // Show stored data diff button if viewing a snapshot
+      list.parentElement.querySelectorAll(".btn-stored-diff").forEach(el => el.remove());
       if (graphViewSnapshotId && nodeId.startsWith("data:")) {
         const nodePath = nodeId.slice("data:".length);
         const stored = await showStoredDataDiff(graphViewSnapshotId, nodePath);
@@ -526,7 +597,7 @@
           const diffBtn = document.createElement("button");
           diffBtn.textContent = "查看数据审查";
           diffBtn.style.cssText = "margin-top:8px;width:100%;";
-          diffBtn.className = "primary";
+          diffBtn.className = "primary btn-stored-diff";
           diffBtn.addEventListener("click", () => {
             const body = qs("#diff-body");
             let html = `<h3 style="margin:0 0 12px;font-size:14px">${escapeHtml(nodePath)} — 保存时的数据审查</h3>`;
@@ -651,6 +722,7 @@
       const hc = data.highlight_counts || {};
       const nbSpans = data.notebook_spans || {};
       const missing = new Set(data.missing_node_ids || []);
+      const newNodes = new Set(data.new_node_ids || []);
       const layoutRoot = String(data.project_root || qs("#root").value.trim() || "");
       const userLayout = loadUserLayoutMap(layoutRoot) || {};
 
@@ -723,6 +795,10 @@
               ? "[磁盘不存在：运行 notebook 后可能生成或依赖该文件]"
               : "[磁盘不存在：双击运行 notebook 可能失败]";
           node.title = `${n.path}\n${missHint}`;
+        } else if (newNodes.has(n.id) && kind === "data") {
+          node.shapeProperties = { borderDashes: [6, 4] };
+          node.borderWidth = Math.max(2, node.borderWidth || 1);
+          node.title = `${n.path}\n[首次出现：此快照中新增]`;
         }
         return node;
       });

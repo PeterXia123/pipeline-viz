@@ -27,7 +27,9 @@ def test_delete_snapshot_removes_files_and_updates_latest(tmp_path: Path):
 
     assert load_latest(tmp_path).snapshot_id == sid2
     assert (history_root(tmp_path) / f"{sid1}.json").is_file()
-    assert (history_root(tmp_path) / sid1 / "files").is_dir()
+    # 旧快照的 blobs 在新快照保存时已被清理，只保留最新快照的文件副本
+    assert not (history_root(tmp_path) / sid1 / "files").is_dir()
+    assert (history_root(tmp_path) / sid2 / "files").is_dir()
 
     assert delete_snapshot(tmp_path, sid1) is True
     assert not (history_root(tmp_path) / f"{sid1}.json").exists()

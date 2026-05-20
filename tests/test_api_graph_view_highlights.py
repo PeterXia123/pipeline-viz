@@ -10,7 +10,8 @@ from pipeline_viz.paths import data_id
 from pipeline_viz.snapshot_store import save_snapshot
 
 
-def test_api_graph_view_snapshot_nonzero_highlights(tmp_path: Path):
+def test_api_graph_view_snapshot_highlights_edge_only_for_structure_change(tmp_path: Path):
+    """图结构变化（新增边）只高亮边，不高亮节点。"""
     nb = "notebooks/a.ipynb"
     (tmp_path / "notebooks").mkdir(parents=True)
     (tmp_path / nb).write_text("{}", encoding="utf-8")
@@ -40,6 +41,5 @@ def test_api_graph_view_snapshot_nonzero_highlights(tmp_path: Path):
     )
     assert data["highlight_debug"]["using_saved_payload"] is True
     assert data["highlight_debug"]["previous_snapshot_id_for_view"] == sid1
-    assert data["highlight_counts"]["node"] > 0
+    assert data["highlight_counts"]["node"] == 0
     assert data["highlight_counts"]["edge"] > 0
-    assert td in data["highlights"]

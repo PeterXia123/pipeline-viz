@@ -7,7 +7,7 @@ from pipeline_viz.graph_builder import build_graph
 from pipeline_viz.layout import compute_layout
 from pipeline_viz.paths import code_id, data_id
 
-ROOT_COMPLEX = Path(__file__).resolve().parent.parent / "example_complex_viz"
+ROOT_COMPLEX = Path(__file__).resolve().parent.parent / "example_good"
 MANIFEST_COMPLEX = ROOT_COMPLEX / "pipeline-manifest.yaml"
 
 ROOT_NB_PY = Path(__file__).resolve().parent.parent / "example_project_nb_py"

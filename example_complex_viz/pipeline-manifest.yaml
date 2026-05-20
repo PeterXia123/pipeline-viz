@@ -1,6 +1,0 @@
-# 复杂示例：单 notebook 串联多段 Python；可在此补充 manifest 与解析器未覆盖的边
-project_root: "."
-codes:
-  - path: notebooks/pipeline.ipynb
-    inputs: []
-    outputs: []

@@ -641,7 +641,6 @@ def commit_highlights(
     prev_id = previous_snapshot_id(project_root, snapshot_id)
     rec_prev = load_snapshot(project_root, prev_id) if prev_id else None
 
-    # 第一条全局快照：没有上一版可比，无「相对上一版的变更」语义，不标红（与后续快照区分）
     if rec_prev is None:
         return {}
 
@@ -683,7 +682,6 @@ def commit_edge_highlights(
     prev_id = previous_snapshot_id(project_root, snapshot_id)
     rec_prev = load_snapshot(project_root, prev_id) if prev_id else None
     if rec_prev is None:
-        # 第一条：无上一条快照可比，不标红边
         return {}
     out: dict[str, str] = {}
     prev_edges = {(e.source, e.target, e.kind) for e in rec_prev.payload.edges}
