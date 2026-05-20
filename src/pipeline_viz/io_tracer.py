@@ -190,3 +190,50 @@ def parse_trace_output(cell_outputs: list[dict[str, Any]]) -> tuple[list[str], l
                 except (json.JSONDecodeError, TypeError):
                     pass
     return [], []
+
+
+def filter_project_paths(project_root: Path, paths: list[str]) -> set[str]:
+    root = project_root.resolve()
+    result: set[str] = set()
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            p = Path(raw).resolve()
+            rel = p.relative_to(root)
+        except (ValueError, OSError):
+            continue
+        s = rel.as_posix()
+        if s.startswith(".."):
+            continue
+        if not DATA_EXT.search(s):
+            continue
+        result.add(s)
+    return result
+
+
+def _runtime_io_path(project_root: Path) -> Path:
+    return project_root / ".pipeline-viz" / "runtime_io.json"
+
+
+def load_runtime_io(project_root: Path) -> dict[str, dict[str, list[str]]]:
+    p = _runtime_io_path(project_root)
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def update_runtime_io(
+    project_root: Path, notebook_rel: str, inputs: set[str], outputs: set[str]
+) -> None:
+    data = load_runtime_io(project_root)
+    data[notebook_rel] = {
+        "inputs": sorted(inputs),
+        "outputs": sorted(outputs),
+    }
+    p = _runtime_io_path(project_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

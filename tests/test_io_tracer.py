@@ -64,3 +64,34 @@ def test_parse_trace_output_handles_text_as_string():
     ]
     reads, writes = parse_trace_output(outputs)
     assert reads == ["/a.csv"]
+
+
+from pathlib import Path
+
+
+def test_filter_project_paths_keeps_data_files_under_root(tmp_path):
+    from pipeline_viz.io_tracer import filter_project_paths
+
+    paths = [
+        str(tmp_path / "data" / "in.csv"),
+        str(tmp_path / "out.json"),
+        "/outside/project/secret.csv",
+        str(tmp_path / "src" / "main.py"),  # .py not a data ext
+    ]
+    result = filter_project_paths(tmp_path, paths)
+    assert result == {"data/in.csv", "out.json"}
+
+
+def test_load_save_runtime_io(tmp_path):
+    from pipeline_viz.io_tracer import load_runtime_io, update_runtime_io
+
+    assert load_runtime_io(tmp_path) == {}
+
+    update_runtime_io(tmp_path, "nb.ipynb", {"a.csv"}, {"b.csv"})
+    data = load_runtime_io(tmp_path)
+    assert data == {"nb.ipynb": {"inputs": ["a.csv"], "outputs": ["b.csv"]}}
+
+    update_runtime_io(tmp_path, "nb2.ipynb", {"c.csv"}, set())
+    data = load_runtime_io(tmp_path)
+    assert "nb.ipynb" in data
+    assert data["nb2.ipynb"] == {"inputs": ["c.csv"], "outputs": []}
