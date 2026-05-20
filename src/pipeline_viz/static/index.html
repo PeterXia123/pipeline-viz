@@ -6,6 +6,7 @@
   <title>pipeline-viz</title>
   <script src="https://unpkg.com/vis-network@10.0.2/standalone/umd/vis-network.min.js" crossorigin="anonymous"></script>
   <style>
+    div.vis-tooltip { font-family: monospace; font-size: 12px; max-width: 360px; line-height: 1.6; padding: 8px 12px; background: #1e293b; color: #e2e8f0; border-radius: 6px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, sans-serif; background: #f6f7f9; color: #222; display: flex; flex-direction: column; height: 100vh; }
     header {
@@ -103,6 +104,40 @@
     .diff-line.del { background: #ffeef0; }
     .diff-line.ctx { background: #f6f8fa; color: #444; }
     .diff-line.hunk { color: #6a737d; background: #fff; font-weight: 600; }
+    #modal-review {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    #modal-review.open { display: flex; }
+    #modal-review .modal-box { max-width: min(960px, 96vw); }
+    .review-hint { font-size: 13px; color: #555; margin: 0 0 12px; }
+    .file-list { list-style: none; padding: 0; margin: 0 0 12px; }
+    .file-item {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 10px 14px; margin: 6px 0; border: 1px solid #e8e8e8; border-radius: 8px;
+      background: #fafafa;
+    }
+    .file-item.reviewed { border-color: #4caf50; background: #f1f8e9; }
+    .file-item.non-df { border-color: #ff9800; background: #fff8e1; }
+    .file-icon { font-size: 20px; flex-shrink: 0; }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name { font-size: 13px; font-weight: 600; word-break: break-all; }
+    .file-meta { font-size: 12px; color: #666; margin-top: 2px; }
+    .file-schema { font-size: 12px; color: #1565c0; margin-top: 3px; }
+    .file-actions { flex-shrink: 0; display: flex; gap: 6px; align-items: flex-start; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-changed { background: #ffebee; color: #b71c1c; }
+    .badge-ok { background: #e8f5e9; color: #2e7d32; }
+    .badge-nondf { background: #fff3e0; color: #e65100; }
+    .dc-detail { display: none; margin-top: 10px; padding: 12px; background: #f6f8fa; border-radius: 6px; font-size: 12px; }
+    .dc-detail.open { display: block; }
+    .dc-detail pre { white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; background: #f0f0f0; padding: 8px; border-radius: 4px; }
+    .merge-key-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .merge-key-row label { font-size: 12px; color: #555; white-space: nowrap; }
+    .merge-key-row input { flex: 1; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 12px; }
+    .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+    .footer-hint { font-size: 12px; color: #888; }
+    .progress-text { font-size: 13px; color: #555; }
   </style>
 </head>
 <body>
@@ -111,13 +146,12 @@
     <label for="root">项目根目录</label>
     <input id="root" type="text" placeholder="/绝对路径/到你的项目" />
     <button type="button" id="btn-load">加载图</button>
-    <button type="button" id="btn-save-layout" title="将当前图上全部节点坐标合并保存到浏览器，各全局版本加载时优先使用">保存本地排布</button>
-    <button type="button" id="btn-clear-user-layout" title="清除本项目的本地排布，恢复为服务端默认布局">清除本地排布</button>
+
     <button type="button" id="btn-save">保存全局快照</button>
     <button type="button" id="btn-dc" title="对比 Data 表格：快照 vs 磁盘">DataComPy 对比所选 Data</button>
     <button type="button" id="btn-run" title="需服务端 PIPELINE_VIZ_ALLOW_RUN=1">运行所选 Notebook</button>
     <button type="button" id="btn-clear-view">清除全局快照视图</button>
-    <span class="hint">左：全局版本；右：点击节点看文件版本；选中左栏某全局版本时，右侧仅显示该次提交中变更的文件版本；未选左栏则显示全部版本点。「保存本地排布」按当前整张图整批合并写入坐标（换项目根目录为另一套）；连线仍随各版本接口变化。</span>
+    <span class="hint">左：全局版本；右：点击节点看文件版本；选中左栏某全局版本时，右侧仅显示该次提交中变更的文件版本；未选左栏则显示全部版本点。拖动节点后位置自动保存；「重置排布」可恢复默认。</span>
   </header>
   <div id="main">
     <aside id="global-history">
@@ -162,6 +196,25 @@
         </div>
       </div>
       <div class="modal-body" id="diff-body"></div>
+    </div>
+  </div>
+  <div id="modal-review" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>保存快照 — 数据变化审查</h2>
+        <span class="progress-text" id="review-progress">0 / 0 已审查</span>
+      </div>
+      <div class="modal-body">
+        <p class="review-hint">检测到以下数据文件发生变化，请审查后再保存。DataFrame 格式需运行 DataComPy。</p>
+        <ul class="file-list" id="review-file-list"></ul>
+      </div>
+      <div class="modal-footer">
+        <span class="footer-hint" id="review-footer-hint">请审查全部变化文件后保存</span>
+        <div style="display:flex;gap:8px">
+          <button id="review-cancel">取消</button>
+          <button class="primary" id="review-confirm" disabled>保存快照</button>
+        </div>
+      </div>
     </div>
   </div>
   <div id="toast"></div>
@@ -256,6 +309,22 @@
 
     function escapeAttr(s) {
       return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    async function saveNodeMeta(snapshotId, nodePath, patch) {
+      const body = {};
+      if (patch.label !== undefined) body.label = patch.label;
+      if (patch.description !== undefined) body.description = patch.description;
+      const r = await fetch(buildUrl("/api/node/meta", { snapshot_id: snapshotId, node_path: nodePath }), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        toast(await r.text());
+        return null;
+      }
+      return await r.json();
     }
 
     async function saveSnapshotMeta(snapshotId, patch) {
@@ -428,18 +497,16 @@
       });
       bindInlineEdit(list, ".node-name", async (el, value) => {
         const sid = el.getAttribute("data-sid");
-        const rec = await saveSnapshotMeta(sid, { label: value });
+        const rec = await saveNodeMeta(sid, j.path, { label: value });
         if (!rec) return;
         toast("名称已保存");
-        await refreshGlobalHistory();
         await showNodeHistory(nodeId);
       });
       bindInlineEdit(list, ".node-desc", async (el, value) => {
         const sid = el.getAttribute("data-sid");
-        const rec = await saveSnapshotMeta(sid, { description: value });
+        const rec = await saveNodeMeta(sid, j.path, { description: value });
         if (!rec) return;
         toast("描述已保存");
-        await refreshGlobalHistory();
         await showNodeHistory(nodeId);
       });
       panel.classList.add("visible");
@@ -682,6 +749,49 @@
         if (!nodeId) return;
         runNotebookByNodeId(nodeId);
       });
+      const _colCache = {};
+      network.on("hoverNode", async (p) => {
+        const nodeId = p.node;
+        if (!nodeId || !nodeId.startsWith("data:")) return;
+        if (_colCache[nodeId]) return;
+        _colCache[nodeId] = "loading";
+        const dataPath = nodeId.slice("data:".length);
+        const root = qs("#root").value.trim();
+        try {
+          const r = await fetch(buildUrl("/api/data/columns", { path: dataPath, project_root: root }));
+          if (!r.ok) return;
+          const j = await r.json();
+          if (j.error) {
+            _colCache[nodeId] = j.error;
+            const ds = network.body.data.nodes;
+            ds.update({ id: nodeId, title: `${dataPath}\n⚠ ${j.error}` });
+            return;
+          }
+          const cols = j.columns || [];
+          if (!cols.length) return;
+          const div = document.createElement("div");
+          div.innerHTML = `<b>${escapeHtml(dataPath)}</b><br><br>`
+            + cols.map(c => escapeHtml(c)).join("<br>")
+            + (j.truncated ? `<br>… 共 ${j.total} 列` : "");
+          _colCache[nodeId] = div;
+          const ds = network.body.data.nodes;
+          ds.update({ id: nodeId, title: div });
+        } catch (_) {}
+      });
+      network.on("dragEnd", (p) => {
+        if (!p.nodes || !p.nodes.length) return;
+        const root = qs("#root").value.trim();
+        const key = userLayoutStorageKey(root);
+        if (!key) return;
+        try {
+          const moved = network.getPositions(p.nodes);
+          const prev = loadUserLayoutMap(root) || {};
+          for (const [id, xy] of Object.entries(moved)) {
+            prev[id] = [Number(xy.x) || 0, Number(xy.y) || 0];
+          }
+          localStorage.setItem(key, JSON.stringify(prev));
+        } catch (_) {}
+      });
 
       const mode = viewSnapshotId
         ? `查看全局提交 ${viewSnapshotId.slice(0, 22)}…`
@@ -698,49 +808,6 @@
       if (lastSelection) await showNodeHistory(lastSelection);
     }
 
-    qs("#btn-save-layout").addEventListener("click", () => {
-      const root = qs("#root").value.trim();
-      if (!root) {
-        toast("请先填写项目根目录");
-        return;
-      }
-      if (!network) {
-        toast("请先加载图");
-        return;
-      }
-      try {
-        const cur = network.getPositions();
-        const key = userLayoutStorageKey(root);
-        if (!key) {
-          toast("项目根目录无效");
-          return;
-        }
-        const prev = loadUserLayoutMap(root) || {};
-        const next = { ...prev };
-        let n = 0;
-        for (const [id, xy] of Object.entries(cur)) {
-          next[id] = [Number(xy.x) || 0, Number(xy.y) || 0];
-          n += 1;
-        }
-        localStorage.setItem(key, JSON.stringify(next));
-        toast(`已保存本地排布：本次整批写入 ${n} 个节点，并与已有记录合并（共 ${Object.keys(next).length} 个 id）`);
-      } catch (e) {
-        toast("保存本地排布失败：" + (e && e.message ? e.message : String(e)));
-      }
-    });
-    qs("#btn-clear-user-layout").addEventListener("click", () => {
-      const root = qs("#root").value.trim();
-      if (!root) {
-        toast("请先填写项目根目录");
-        return;
-      }
-      const key = userLayoutStorageKey(root);
-      if (!key) return;
-      if (!window.confirm("确认清除该项目的「本地排布」？下次加载将使用服务端默认坐标。")) return;
-      localStorage.removeItem(key);
-      toast("已清除本地排布");
-      loadGraph();
-    });
 
     qs("#btn-load").addEventListener("click", loadGraph);
     qs("#btn-clear-view").addEventListener("click", () => {
@@ -749,20 +816,244 @@
       loadGraph();
     });
 
-    qs("#btn-save").addEventListener("click", async () => {
-      const res = await fetch(buildUrl("/api/snapshot/save"), { method: "POST", cache: "no-store" });
-      if (!res.ok) { toast(await res.text()); return; }
-      const j = await res.json();
-      if (j.skipped) {
-        toast(
-          j.message
-            || "未保存：相对上一全局快照无变化（请硬刷新页面以更新提示文案；并确认项目根目录与已保存文件）。",
-        );
+    // ---- Review state ----
+    let reviewFiles = [];
+    let reviewDiffs = {};
+    let reviewedSet = new Set();
+
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return bytes + " B";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+      return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    }
+
+    function updateReviewProgress() {
+      const total = reviewFiles.length;
+      const done = reviewedSet.size;
+      qs("#review-progress").textContent = `${done} / ${total} 已审查`;
+      if (done >= total) {
+        qs("#review-confirm").disabled = false;
+        qs("#review-footer-hint").textContent = "全部已审查，可以保存";
+        qs("#review-footer-hint").style.color = "#2e7d32";
+      } else {
+        qs("#review-confirm").disabled = true;
+        qs("#review-footer-hint").textContent = "请审查全部变化文件后保存";
+        qs("#review-footer-hint").style.color = "#888";
+      }
+    }
+
+    function markFileReviewed(path) {
+      reviewedSet.add(path);
+      const li = document.querySelector(`[data-review-path="${CSS.escape(path)}"]`);
+      if (li) {
+        li.classList.add("reviewed");
+        const badge = li.querySelector(".badge");
+        if (badge) { badge.className = "badge badge-ok"; badge.textContent = "已审查 ✓"; }
+      }
+      updateReviewProgress();
+    }
+
+    function buildReviewFileItem(cf) {
+      const li = document.createElement("li");
+      li.className = "file-item" + (cf.is_dataframe ? "" : " non-df");
+      li.dataset.reviewPath = cf.path;
+
+      const icon = cf.is_dataframe ? "📊" : "📦";
+      const badgeClass = cf.is_dataframe ? "badge-changed" : "badge-nondf";
+      const badgeText = cf.is_dataframe ? "已变化" : "非表格";
+
+      let schemaHtml = "";
+      if (cf.is_dataframe && cf.schema_diff) {
+        const sd = cf.schema_diff;
+        const parts = [];
+        if (sd.row_count_old != null && sd.row_count_new != null) {
+          const diff = sd.row_count_new - sd.row_count_old;
+          const sign = diff >= 0 ? "+" : "";
+          parts.push(`行数: ${sd.row_count_old.toLocaleString()} → ${sd.row_count_new.toLocaleString()} (${sign}${diff})`);
+        }
+        if (sd.columns_added && sd.columns_added.length > 0) {
+          parts.push(`列新增: <b>${escapeHtml(sd.columns_added.join(", "))}</b>`);
+        }
+        if (sd.columns_removed && sd.columns_removed.length > 0) {
+          parts.push(`列删除: <b>${escapeHtml(sd.columns_removed.join(", "))}</b>`);
+        }
+        if (parts.length === 0) parts.push("schema 无变化，内容已变化");
+        schemaHtml = `<div class="file-schema">${parts.join(" | ")}</div>`;
+      }
+
+      const sizeOld = formatFileSize(cf.file_size_old || 0);
+      const sizeNew = formatFileSize(cf.file_size_new || 0);
+
+      li.innerHTML = `
+        <div class="file-icon">${icon}</div>
+        <div class="file-info">
+          <div class="file-name">${escapeHtml(cf.path)}</div>
+          <div class="file-meta">
+            <span class="badge ${badgeClass}">${badgeText}</span>
+            大小: ${sizeOld} → ${sizeNew}
+          </div>
+          ${schemaHtml}
+          ${cf.is_dataframe ? `<div class="dc-detail" id="dc-review-${CSS.escape(cf.path)}"></div>` : ""}
+        </div>
+        <div class="file-actions">
+          ${cf.is_dataframe
+            ? `<button class="btn-run-dc" data-path="${escapeAttr(cf.path)}">运行 DataComPy</button>`
+            : `<button class="btn-confirm-nondf" data-path="${escapeAttr(cf.path)}">确认 ✓</button>`
+          }
+        </div>
+      `;
+      return li;
+    }
+
+    function renderDCDetail(path, result) {
+      const el = document.getElementById(`dc-review-${CSS.escape(path)}`);
+      if (!el) return;
+      el.classList.add("open");
+      el.innerHTML = `
+        <h4 style="margin:0 0 8px;font-size:13px">DataComPy 结果</h4>
+        <div class="merge-key-row">
+          <label>Merge Key:</label>
+          <input type="text" class="dc-merge-input" data-path="${escapeAttr(path)}" placeholder="逗号分隔，留空按行顺序" />
+          <button class="btn-rerun-dc" data-path="${escapeAttr(path)}" style="font-size:11px">重新比较</button>
+        </div>
+        <pre>${escapeHtml(result.report || JSON.stringify(result, null, 2))}</pre>
+        <div style="margin-top:8px">
+          <button class="primary btn-confirm-dc" data-path="${escapeAttr(path)}" style="font-size:12px">确认已审查 ✓</button>
+        </div>
+      `;
+    }
+
+    async function runReviewDC(path, mergeKeys) {
+      const el = document.getElementById(`dc-review-${CSS.escape(path)}`);
+      if (el) { el.classList.add("open"); el.innerHTML = "<p>计算中…</p>"; }
+      const extra = { path };
+      if (mergeKeys) extra.merge_keys = mergeKeys;
+      try {
+        const res = await fetch(buildUrl("/api/snapshot/review-compare", extra));
+        const result = await res.json();
+        if (!res.ok) {
+          if (el) el.innerHTML = `<pre style="color:#b71c1c">${escapeHtml(result.detail || JSON.stringify(result))}</pre>`;
+          return;
+        }
+        reviewDiffs[path] = {
+          datacompy_report: result.report || "",
+          datacompy_matches: result.matches,
+        };
+        renderDCDetail(path, result);
+      } catch (e) {
+        if (el) el.innerHTML = `<pre style="color:#b71c1c">请求失败: ${escapeHtml(String(e))}</pre>`;
+      }
+    }
+
+    qs("#review-file-list").addEventListener("click", async (e) => {
+      const btnDC = e.target.closest(".btn-run-dc");
+      if (btnDC) { await runReviewDC(btnDC.dataset.path, ""); return; }
+      const btnNonDF = e.target.closest(".btn-confirm-nondf");
+      if (btnNonDF) { markFileReviewed(btnNonDF.dataset.path); return; }
+      const btnConfirmDC = e.target.closest(".btn-confirm-dc");
+      if (btnConfirmDC) { markFileReviewed(btnConfirmDC.dataset.path); return; }
+      const btnRerun = e.target.closest(".btn-rerun-dc");
+      if (btnRerun) {
+        const input = document.querySelector(`.dc-merge-input[data-path="${CSS.escape(btnRerun.dataset.path)}"]`);
+        const keys = input ? input.value.trim() : "";
+        await runReviewDC(btnRerun.dataset.path, keys);
         return;
       }
-      toast(`已保存全局快照 ${j.snapshot_id}（已标红本次变更文件）`);
-      viewSnapshotId = j.snapshot_id; // 保存后自动切到该版本，显示相对上一版本的变更
-      loadGraph();
+    });
+
+    qs("#review-cancel").addEventListener("click", () => {
+      qs("#modal-review").classList.remove("open");
+    });
+    qs("#modal-review").addEventListener("click", (e) => {
+      if (e.target.id === "modal-review") qs("#modal-review").classList.remove("open");
+    });
+
+    qs("#review-confirm").addEventListener("click", async () => {
+      qs("#review-confirm").disabled = true;
+      qs("#review-confirm").textContent = "保存中…";
+
+      const allDiffs = {};
+      for (const cf of reviewFiles) {
+        const entry = { reviewed: true };
+        if (cf.schema_diff) entry.schema_diff = cf.schema_diff;
+        if (reviewDiffs[cf.path]) Object.assign(entry, reviewDiffs[cf.path]);
+        entry.file_size_old = cf.file_size_old || 0;
+        entry.file_size_new = cf.file_size_new || 0;
+        allDiffs[cf.path] = entry;
+      }
+
+      try {
+        const res = await fetch(buildUrl("/api/snapshot/save"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data_diffs: allDiffs }),
+          cache: "no-store",
+        });
+        if (!res.ok) { toast(await res.text()); return; }
+        const j = await res.json();
+        if (j.skipped) { toast(j.message || "未保存"); return; }
+        toast(`已保存全局快照 ${j.snapshot_id}（含 ${reviewFiles.length} 个数据变化审查记录）`);
+        viewSnapshotId = j.snapshot_id;
+        loadGraph();
+      } finally {
+        qs("#modal-review").classList.remove("open");
+        qs("#review-confirm").textContent = "保存快照";
+        qs("#review-confirm").disabled = false;
+      }
+    });
+
+    qs("#btn-save").addEventListener("click", async () => {
+      qs("#btn-save").disabled = true;
+      qs("#btn-save").textContent = "检测中…";
+      try {
+        const res = await fetch(buildUrl("/api/snapshot/pre-check"));
+        if (!res.ok) { toast("预检失败: " + await res.text()); return; }
+        const data = await res.json();
+
+        if (!data.has_changes) {
+          if (data.reason === "no_previous_snapshot") {
+            const saveRes = await fetch(buildUrl("/api/snapshot/save"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+              cache: "no-store",
+            });
+            const j = await saveRes.json();
+            if (j.skipped) { toast(j.message || "未保存"); }
+            else { toast(`已保存首个全局快照 ${j.snapshot_id}`); viewSnapshotId = j.snapshot_id; loadGraph(); }
+          } else {
+            toast("未检测到变化，无需保存");
+          }
+          return;
+        }
+
+        if (data.changed_files.length === 0) {
+          const saveRes = await fetch(buildUrl("/api/snapshot/save"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+            cache: "no-store",
+          });
+          const j = await saveRes.json();
+          if (j.skipped) { toast(j.message || "未保存"); }
+          else { toast(`已保存全局快照 ${j.snapshot_id}`); viewSnapshotId = j.snapshot_id; loadGraph(); }
+          return;
+        }
+
+        reviewFiles = data.changed_files;
+        reviewDiffs = {};
+        reviewedSet = new Set();
+        const list = qs("#review-file-list");
+        list.innerHTML = "";
+        for (const cf of reviewFiles) {
+          list.appendChild(buildReviewFileItem(cf));
+        }
+        updateReviewProgress();
+        qs("#modal-review").classList.add("open");
+      } finally {
+        qs("#btn-save").disabled = false;
+        qs("#btn-save").textContent = "保存全局快照";
+      }
     });
 
     qs("#dc-close").addEventListener("click", () => qs("#modal-dc").classList.remove("open"));
