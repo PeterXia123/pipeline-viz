@@ -37,7 +37,11 @@ def _discover_notebooks(project_root: Path) -> list[str]:
     return sorted(out)
 
 
-def build_graph(project_root: Path, manifest_path: Path | None) -> GraphPayload:
+def build_graph(
+    project_root: Path,
+    manifest_path: Path | None,
+    runtime_io: dict[str, dict[str, list[str]]] | None = None,
+) -> GraphPayload:
     root = project_root.resolve()
     manifest_codes: dict[str, CodeEntry] = {}
     if manifest_path and manifest_path.is_file():
@@ -97,6 +101,11 @@ def build_graph(project_root: Path, manifest_path: Path | None) -> GraphPayload:
         entry = manifest_codes.get(nb_rel, CodeEntry(path=nb_rel))
         parsed_in, parsed_out = parse_notebook_io(root, nb_rel)
         ins, outs = _merge_io(root, entry, parsed_in, parsed_out)
+        rt = (runtime_io or {}).get(nb_rel, {})
+        rt_ins = {normalize_rel(root, x) for x in rt.get("inputs", [])} if rt else set()
+        rt_outs = {normalize_rel(root, x) for x in rt.get("outputs", [])} if rt else set()
+        ins = ins | {x for x in rt_ins if x}
+        outs = outs | {x for x in rt_outs if x}
 
         ensure_notebook(nb_rel)
         for d in ins:
@@ -123,6 +132,11 @@ def build_graph(project_root: Path, manifest_path: Path | None) -> GraphPayload:
         entry = manifest_codes.get(py_rel, CodeEntry(path=py_rel))
         parsed_in, parsed_out = parse_python_file_io(root, py_rel)
         ins, outs = _merge_io(root, entry, parsed_in, parsed_out)
+        rt = (runtime_io or {}).get(py_rel, {})
+        rt_ins = {normalize_rel(root, x) for x in rt.get("inputs", [])} if rt else set()
+        rt_outs = {normalize_rel(root, x) for x in rt.get("outputs", [])} if rt else set()
+        ins = ins | {x for x in rt_ins if x}
+        outs = outs | {x for x in rt_outs if x}
 
         ensure_python(py_rel)
         for d in ins:
