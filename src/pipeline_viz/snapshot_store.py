@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from pipeline_viz.models import GraphPayload
 from pipeline_viz.notebook_sanitize import raw_file_sha256, stable_ipynb_sha256
-from pipeline_viz.paths import code_id, data_id
+from pipeline_viz.paths import code_id, data_id, is_under_root
 
 _SAFE_SNAPSHOT_ID = re.compile(r"^[0-9A-Za-z_.\-]+$")
 
@@ -42,6 +42,8 @@ class SnapshotRecord(BaseModel):
     description: str = ""
     payload: GraphPayload
     file_hashes: dict[str, str] = Field(default_factory=dict)
+    node_labels: dict[str, dict[str, str]] = Field(default_factory=dict)
+    data_diffs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -57,6 +59,10 @@ class SnapshotRecord(BaseModel):
             out["label"] = ""
         if "description" not in out:
             out["description"] = ""
+        if "node_labels" not in out:
+            out["node_labels"] = {}
+        if "data_diffs" not in out:
+            out["data_diffs"] = {}
         return out
 
 
@@ -111,7 +117,7 @@ def compute_file_hashes(project_root: Path, paths: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for rel in paths:
         p = (root / rel).resolve()
-        if not str(p).startswith(str(root)):
+        if not is_under_root(root, p):
             continue
         if p.is_file():
             out[rel] = (
@@ -162,7 +168,7 @@ def _payload_fingerprint_str(payload: GraphPayload) -> str:
 
 
 def _hashes_fingerprint_str(hashes: dict[str, str]) -> str:
-    return json.dumps(sorted(hashes.items()), ensure_ascii=False)
+    return json.dumps(sorted((k, v) for k, v in hashes.items() if v), ensure_ascii=False)
 
 
 def state_fingerprint(payload: GraphPayload, hashes: dict[str, str]) -> str:
@@ -240,7 +246,7 @@ def _copy_tracked_files(project_root: Path, snapshot_id: str, paths: list[str]) 
     hashes: dict[str, str] = {}
     for rel in paths:
         src = (root / rel).resolve()
-        if not str(src).startswith(str(root)) or not src.is_file():
+        if not is_under_root(root, src) or not src.is_file():
             hashes[rel] = ""
             continue
         dst = blob_path(project_root, snapshot_id, rel)
@@ -276,13 +282,12 @@ def save_snapshot(
     hashes_cur = compute_file_hashes(project_root, paths_cur)
 
     if last:
-        # 旧快照（或升级前的 latest）可能没有 file_hashes；此时用磁盘 hash 作为上一版本状态的近似
-        paths_prev = tracked_paths(project_root, last.payload)
-        paths_union = sorted(set(paths_cur) | set(paths_prev))
-
-        if last.file_hashes:
-            prev_hashes_for_compare = last.file_hashes
-        else:
+        prev_hashes_for_compare = _effective_hashes(
+            project_root, last.snapshot_id, last
+        )
+        if not prev_hashes_for_compare:
+            paths_prev = tracked_paths(project_root, last.payload)
+            paths_union = sorted(set(paths_cur) | set(paths_prev))
             prev_hashes_for_compare = compute_file_hashes(project_root, paths_union)
 
         graph_changed = _payload_fingerprint_str(last.payload) != _payload_fingerprint_str(payload)
@@ -325,7 +330,21 @@ def save_snapshot(
     )
     _write_index(project_root, idx)
 
+    _cleanup_old_blobs(project_root, sid)
+
     return sid, jp, "saved", None
+
+
+def _cleanup_old_blobs(project_root: Path, keep_sid: str) -> None:
+    hr = history_root(project_root)
+    if not hr.is_dir():
+        return
+    for child in hr.iterdir():
+        if not child.is_dir() or child.name == keep_sid:
+            continue
+        files_dir = child / "files"
+        if files_dir.is_dir():
+            shutil.rmtree(files_dir, ignore_errors=True)
 
 
 def delete_snapshot(project_root: Path, snapshot_id: str) -> bool:
@@ -403,6 +422,30 @@ def set_snapshot_label(project_root: Path, snapshot_id: str, label: str) -> bool
     )
 
 
+def set_node_meta(
+    project_root: Path,
+    snapshot_id: str,
+    node_path: str,
+    *,
+    label: str,
+    description: str,
+) -> bool:
+    rec = load_snapshot(project_root, snapshot_id)
+    if not rec:
+        return False
+    nl = dict(rec.node_labels)
+    nl[node_path] = {"label": label, "description": description}
+    rec = rec.model_copy(update={"node_labels": nl})
+    snapshot_json_path(project_root, snapshot_id).write_text(
+        rec.model_dump_json(indent=2), encoding="utf-8"
+    )
+    _cache_drop(project_root, snapshot_id)
+    latest = load_latest(project_root)
+    if latest and latest.snapshot_id == snapshot_id:
+        latest_path(project_root).write_text(rec.model_dump_json(indent=2), encoding="utf-8")
+    return True
+
+
 def node_path_from_graph_id(node_id: str) -> Optional[str]:
     if node_id.startswith("data:"):
         return node_id[len("data:") :]
@@ -458,12 +501,13 @@ def history_for_node(
                 continue
             else:
                 emitted_code_fallback = True
+        nl = rec.node_labels.get(node_path, {})
         out_asc.append(
             {
                 "snapshot_id": sid,
                 "saved_at": rec.saved_at,
-                "label": rec.label or "",
-                "description": rec.description or "",
+                "label": nl.get("label") or "",
+                "description": nl.get("description") or "",
             }
         )
     return sorted(out_asc, key=lambda x: x["saved_at"], reverse=True)
@@ -513,6 +557,34 @@ def _graph_node_id_for_tracked_rel(rel: str, current_payload: GraphPayload) -> O
             if Path(n.path.replace("\\", "/")).name == base:
                 return n.id
     return None
+
+
+def _compute_hashes_from_blobs(
+    project_root: Path, snapshot_id: str, payload: GraphPayload
+) -> dict[str, str]:
+    """Legacy snapshots lack file_hashes; recompute from stored blob copies."""
+    paths = tracked_paths(project_root, payload)
+    out: dict[str, str] = {}
+    for rel in paths:
+        bp = blob_path(project_root, snapshot_id, rel)
+        if bp.is_file():
+            out[rel] = (
+                stable_ipynb_sha256(bp)
+                if rel.lower().endswith(".ipynb")
+                else file_sha256(bp)
+            )
+    return out
+
+
+def _effective_hashes(
+    project_root: Path, snapshot_id: str, rec: SnapshotRecord
+) -> dict[str, str]:
+    recomputed = _compute_hashes_from_blobs(project_root, snapshot_id, rec.payload)
+    if recomputed:
+        return recomputed
+    if rec.file_hashes:
+        return rec.file_hashes
+    return {}
 
 
 def diff_highlights(
@@ -571,28 +643,28 @@ def commit_highlights(
     if rec_prev is None:
         return {}
 
-    all_paths = set(rec_prev.file_hashes) | set(rec_sel.file_hashes)
+    prev_hashes = _effective_hashes(project_root, prev_id, rec_prev)
+    sel_hashes = _effective_hashes(project_root, snapshot_id, rec_sel)
+
+    all_paths = set(prev_hashes) | set(sel_hashes)
     changed_paths: set[str] = set()
     for p in all_paths:
-        if rec_prev.file_hashes.get(p) != rec_sel.file_hashes.get(p):
+        if prev_hashes.get(p) != sel_hashes.get(p):
             changed_paths.add(p)
 
     cur_ids = {n.id for n in current_payload.nodes}
     hi: dict[str, str] = {}
     for rel in changed_paths:
-        # 如果两侧都不存在（hash 为空）则不标记；created/deleted 会在 changed_paths 中体现
-        if not (rec_prev.file_hashes.get(rel) or rec_sel.file_hashes.get(rel)):
+        prev_h = prev_hashes.get(rel) or ""
+        sel_h = sel_hashes.get(rel) or ""
+        if not prev_h and not sel_h:
+            continue
+        if not prev_h and sel_h:
+            # 文件首次生成：虚线→实线即可，不标红
             continue
         nid = _graph_node_id_for_tracked_rel(rel, current_payload)
         if nid:
-            hi[nid] = "#ffb3b3"  # 红色提示：本次全局快照变更文件
-
-    # 图结构变化（例如只改 manifest 但不跟踪 manifest 文件）：也应在“查看该次提交”时高亮
-    # 语义：红色代表“该次全局快照相对上一版发生变化”，不局限于文件内容变化。
-    graph_hi = diff_highlights(rec_sel.payload, rec_prev.payload)
-    for nid in graph_hi:
-        if nid in cur_ids:
-            hi.setdefault(nid, "#ffb3b3")
+            hi[nid] = "#ffb3b3"
 
     return hi
 
@@ -631,11 +703,13 @@ def path_changed_in_commit(project_root: Path, snapshot_id: str, rel: str) -> bo
     prev_id = previous_snapshot_id(project_root, snapshot_id)
     rec_prev = load_snapshot(project_root, prev_id) if prev_id else None
 
+    sel_hashes = _effective_hashes(project_root, snapshot_id, rec_sel)
     if rec_prev is None:
-        return bool(rec_sel.file_hashes.get(rel))
+        return bool(sel_hashes.get(rel))
 
-    if rec_prev.file_hashes.get(rel) != rec_sel.file_hashes.get(rel):
-        if not (rec_prev.file_hashes.get(rel) or rec_sel.file_hashes.get(rel)):
+    prev_hashes = _effective_hashes(project_root, prev_id, rec_prev)
+    if prev_hashes.get(rel) != sel_hashes.get(rel):
+        if not (prev_hashes.get(rel) or sel_hashes.get(rel)):
             return False
         return True
     return False
