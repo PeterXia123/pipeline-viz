@@ -259,7 +259,8 @@ def _copy_tracked_files(project_root: Path, snapshot_id: str, paths: list[str]) 
 
 
 def save_snapshot(
-    project_root: Path, payload: GraphPayload
+    project_root: Path, payload: GraphPayload,
+    data_diffs: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str | None, Path | None, str, dict[str, Any] | None]:
     """
     若与上一全局快照状态完全一致，则不写入。
@@ -313,6 +314,7 @@ def save_snapshot(
         description="",
         payload=payload,
         file_hashes=file_hashes,
+        data_diffs=data_diffs or {},
     )
 
     jp = snapshot_json_path(project_root, sid)

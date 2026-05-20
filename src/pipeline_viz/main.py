@@ -319,10 +319,14 @@ def api_graph(
 
 
 @app.post("/api/snapshot/save")
-def api_snapshot_save(project_root: Optional[str] = Query(default=None)):
+def api_snapshot_save(
+    project_root: Optional[str] = Query(default=None),
+    body: dict = Body(default_factory=dict),
+):
     root = _resolve_root(project_root)
     payload = _build_graph_or_400(root)
-    sid, jp, msg, skip_detail = save_snapshot(root, payload)
+    data_diffs = body.get("data_diffs") or {}
+    sid, jp, msg, skip_detail = save_snapshot(root, payload, data_diffs=data_diffs)
     if sid is None:
         out = {
             "skipped": True,

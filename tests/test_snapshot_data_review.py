@@ -118,6 +118,39 @@ def test_precheck_non_dataframe_file(tmp_path: Path):
 
 
 from pipeline_viz.main import api_snapshot_review_compare
+from pipeline_viz.snapshot_store import load_latest
+
+
+def test_save_with_data_diffs(tmp_path: Path):
+    csv = "data/orders.csv"
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / csv).write_text("id,amount\n1,10\n2,20\n", encoding="utf-8")
+
+    p = GraphPayload(
+        nodes=[GraphNode(id=data_id(csv), kind="data", label="orders.csv", path=csv)],
+        edges=[],
+    )
+    save_snapshot(tmp_path, p)
+    (tmp_path / csv).write_text("id,amount\n1,10\n2,25\n3,30\n", encoding="utf-8")
+
+    diffs = {
+        csv: {
+            "schema_diff": {
+                "row_count_old": 2,
+                "row_count_new": 3,
+                "columns_added": [],
+                "columns_removed": [],
+            },
+            "datacompy_report": "Some report text",
+            "datacompy_matches": False,
+        }
+    }
+    sid, _, msg, _ = save_snapshot(tmp_path, p, data_diffs=diffs)
+    assert sid is not None
+    assert msg == "saved"
+
+    rec = load_latest(tmp_path)
+    assert rec.data_diffs == diffs
 
 
 def test_review_compare_returns_datacompy_result(tmp_path: Path):
