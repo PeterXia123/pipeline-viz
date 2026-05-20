@@ -10,6 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from pipeline_viz.data_profile import (
+    compute_schema_diff,
+    extract_profile,
+    extract_profile_from_bytes,
+    is_dataframe_format,
+)
 from pipeline_viz.dataframe_compare import compare_snapshot_blob_to_disk, is_dataframe_file
 from pipeline_viz.file_diff import diff_pair_for_display, read_text_safe
 from pipeline_viz.graph_builder import build_graph
@@ -41,6 +47,7 @@ from pipeline_viz.snapshot_store import (
     previous_snapshot_id,
     read_blob,
     save_snapshot,
+    set_node_meta,
     set_snapshot_label,
     set_snapshot_meta,
 )
@@ -454,14 +461,15 @@ def api_node_history(
                 "view_snapshot_id": view_snapshot_id,
                 "commit_filtered": True,
             }
+        nl = rec.node_labels.get(p, {})
         return {
             "path": p,
             "entries": [
                 {
                     "snapshot_id": rec.snapshot_id,
                     "saved_at": rec.saved_at,
-                    "label": rec.label or "",
-                    "description": rec.description or "",
+                    "label": nl.get("label") or "",
+                    "description": nl.get("description") or "",
                 }
             ],
             "view_snapshot_id": view_snapshot_id,
@@ -473,6 +481,77 @@ def api_node_history(
         "entries": history_for_node(root, p, is_data=is_data),
         "view_snapshot_id": None,
         "commit_filtered": False,
+    }
+
+
+@app.post("/api/node/meta")
+def api_node_meta(
+    snapshot_id: str = Query(..., description="快照 ID"),
+    node_path: str = Query(..., description="文件相对路径"),
+    project_root: Optional[str] = Query(default=None),
+    body: dict = Body(default_factory=dict),
+):
+    root = _resolve_root(project_root)
+    rec = load_snapshot(root, snapshot_id)
+    if not rec:
+        raise HTTPException(404, "snapshot not found")
+    cur = rec.node_labels.get(node_path, {})
+    label = cur.get("label", "") if "label" not in body else str(body.get("label") or "")
+    description = cur.get("description", "") if "description" not in body else str(body.get("description") or "")
+    if not set_node_meta(root, snapshot_id, node_path, label=label, description=description):
+        raise HTTPException(500, "failed to save")
+    return {"ok": True, "snapshot_id": snapshot_id, "node_path": node_path, "label": label, "description": description}
+
+
+MAX_COLUMNS_PREVIEW = 30
+
+
+@app.get("/api/data/columns")
+def api_data_columns(
+    path: str = Query(..., description="data 文件相对路径"),
+    project_root: Optional[str] = Query(default=None),
+):
+    root = _resolve_root(project_root)
+    fp = (root / path).resolve()
+    if not is_under_root(root, fp):
+        raise HTTPException(400, "path escapes project root")
+    if not fp.is_file():
+        return {"path": path, "columns": [], "total": 0, "error": "文件不存在"}
+
+    ext = fp.suffix.lower()
+    try:
+        if ext in (".csv", ".tsv"):
+            import pandas as pd
+            sep = "\t" if ext == ".tsv" else ","
+            cols = pd.read_csv(fp, nrows=0, sep=sep).columns.tolist()
+        elif ext in (".parquet", ".pq"):
+            try:
+                import pyarrow.parquet as pq
+                cols = pq.read_schema(fp).names
+            except ImportError:
+                import pandas as pd
+                cols = pd.read_parquet(fp).columns.tolist()
+        elif ext in (".feather", ".ftr", ".arrow", ".ipc"):
+            import pyarrow.feather as pf
+            cols = pf.read_table(fp, columns=[]).schema.names
+        elif ext in (".json", ".jsonl", ".ndjson"):
+            import pandas as pd
+            if ext == ".json":
+                cols = pd.read_json(fp, nrows=1).columns.tolist()
+            else:
+                cols = pd.read_json(fp, lines=True, nrows=1).columns.tolist()
+        else:
+            return {"path": path, "columns": [], "total": 0, "error": f"不支持的格式: {ext}"}
+    except Exception as e:
+        return {"path": path, "columns": [], "total": 0, "error": str(e)[:200]}
+
+    total = len(cols)
+    truncated = total > MAX_COLUMNS_PREVIEW
+    return {
+        "path": path,
+        "columns": cols[:MAX_COLUMNS_PREVIEW],
+        "total": total,
+        "truncated": truncated,
     }
 
 
@@ -555,6 +634,97 @@ def api_data_datacompy(
     if result.get("error"):
         raise HTTPException(status_code=400, detail=str(result["error"]))
     return result
+
+
+@app.get("/api/snapshot/pre-check")
+def api_snapshot_precheck(project_root: Optional[str] = Query(default=None)):
+    root = _resolve_root(project_root)
+    payload = _build_graph_or_400(root)
+
+    from pipeline_viz.snapshot_store import (
+        compute_file_hashes,
+        tracked_paths,
+        _effective_hashes,
+        _hashes_fingerprint_str,
+        _payload_fingerprint_str,
+    )
+
+    last = load_latest(root)
+    paths_cur = tracked_paths(root, payload)
+    hashes_cur = compute_file_hashes(root, paths_cur)
+
+    if not last:
+        return {"has_changes": False, "changed_files": [], "reason": "no_previous_snapshot"}
+
+    prev_hashes = _effective_hashes(root, last.snapshot_id, last)
+    graph_changed = _payload_fingerprint_str(last.payload) != _payload_fingerprint_str(payload)
+    files_changed = _hashes_fingerprint_str(prev_hashes) != _hashes_fingerprint_str(hashes_cur)
+
+    if not graph_changed and not files_changed:
+        return {"has_changes": False, "changed_files": [], "reason": "no_changes"}
+
+    changed_files = []
+    # Use data nodes from both the current and previous payload so that files
+    # tracked in the last snapshot are checked even if the graph builder didn't
+    # re-discover them (e.g. the notebook has no auto-detectable reference).
+    data_node_paths = {n.path for n in payload.nodes if n.kind == "data"} | {
+        n.path for n in last.payload.nodes if n.kind == "data"
+    }
+
+    for rel in sorted(data_node_paths):
+        old_h = (prev_hashes.get(rel) or "").strip()
+        new_h = (hashes_cur.get(rel) or "").strip()
+        if not new_h:
+            # Compute current hash directly from disk if not in hashes_cur
+            disk_file = (root / rel).resolve()
+            if disk_file.is_file():
+                from pipeline_viz.snapshot_store import compute_file_hashes as _cfh
+                _tmp = _cfh(root, [rel])
+                new_h = (_tmp.get(rel) or "").strip()
+        if old_h == new_h:
+            continue
+        if not old_h and new_h:
+            continue  # first-time creation, skip
+
+        disk_path = (root / rel).resolve()
+
+        new_profile = extract_profile(disk_path) if disk_path.is_file() else {}
+        old_blob = read_blob(root, last.snapshot_id, rel)
+
+        # Determine if actually a readable DataFrame (extension may match but content may not be)
+        is_df = is_dataframe_format(rel) and new_profile.get("format") not in (
+            "non_dataframe",
+            "missing",
+        ) and new_profile.get("row_count") is not None
+
+        entry: dict = {
+            "path": rel,
+            "is_dataframe": is_df,
+            "file_size_old": 0,
+            "file_size_new": new_profile.get("file_size", 0),
+        }
+
+        if old_blob is not None:
+            old_profile = extract_profile_from_bytes(old_blob, Path(rel).suffix)
+            entry["file_size_old"] = old_profile.get("file_size", 0)
+            if is_df:
+                entry["schema_diff"] = compute_schema_diff(old_profile, new_profile)
+                entry["old_profile"] = old_profile
+                entry["new_profile"] = new_profile
+        else:
+            if is_df:
+                entry["schema_diff"] = None
+                entry["old_profile"] = None
+                entry["new_profile"] = new_profile
+
+        changed_files.append(entry)
+
+    return {
+        "has_changes": graph_changed or files_changed or len(changed_files) > 0,
+        "changed_files": changed_files,
+        "graph_changed": graph_changed,
+        "files_changed": files_changed,
+    }
 
 
 @app.post("/api/run-notebook")
