@@ -1,0 +1,6 @@
+product_id,name,category,cost_cny
+P10,wireless_earbuds,electronics,80.0
+P20,smart_watch,electronics,1200.0
+P30,phone_case,accessories,15.0
+P40,bluetooth_speaker,electronics,350.0
+P50,laptop_stand,office,1500.0

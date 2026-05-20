@@ -1,0 +1,5 @@
+project_root: .
+code_dirs:
+  - pipeline
+data_dirs:
+  - data

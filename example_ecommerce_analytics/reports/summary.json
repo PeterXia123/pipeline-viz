@@ -1,0 +1,33 @@
+{
+  "total_users": 7,
+  "segment_centroids": {
+    "frequent": {
+      "avg_spend_usd": 203.78,
+      "avg_orders": 3.0,
+      "count": 1
+    },
+    "vip": {
+      "avg_spend_usd": 698.87,
+      "avg_orders": 2.0,
+      "count": 3
+    },
+    "casual": {
+      "avg_spend_usd": 75.59,
+      "avg_orders": 1.0,
+      "count": 2
+    },
+    "high_value": {
+      "avg_spend_usd": 344.86,
+      "avg_orders": 1.0,
+      "count": 1
+    }
+  },
+  "monthly_revenue": [
+    {
+      "order_month": "2025-11",
+      "monthly_revenue_usd": 2796.44,
+      "monthly_orders": 12,
+      "monthly_margin_usd": 1529.6
+    }
+  ]
+}

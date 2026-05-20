@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>保存快照 - 数据审查原型</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f6f7f9; color: #222; }
+    button {
+      padding: 6px 12px; border-radius: 6px; border: 1px solid #bbb;
+      background: #fff; cursor: pointer; font-size: 13px;
+    }
+    button:hover { background: #f0f2f5; }
+    button.primary { background: #1565c0; color: #fff; border-color: #0d47a1; }
+    button.primary:hover { background: #0d47a1; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .demo-bar {
+      padding: 14px 20px; background: #fff; border-bottom: 1px solid #e2e4e8;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .demo-bar h1 { margin: 0; font-size: 18px; font-weight: 700; }
+
+    /* ---- overlay ---- */
+    .overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: #fff; border-radius: 10px; max-width: min(960px, 96vw); max-height: 90vh;
+      width: 100%; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal-head {
+      padding: 14px 18px; border-bottom: 1px solid #eee;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .modal-head h2 { margin: 0; font-size: 16px; flex: 1; }
+    .modal-body { padding: 16px 18px; overflow: auto; flex: 1; }
+
+    /* ---- file list ---- */
+    .file-list { list-style: none; padding: 0; margin: 0 0 16px; }
+    .file-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; margin: 6px 0; border: 1px solid #e8e8e8; border-radius: 8px;
+      background: #fafafa; transition: border-color .15s;
+    }
+    .file-item.reviewed { border-color: #4caf50; background: #f1f8e9; }
+    .file-item.non-df { border-color: #ff9800; background: #fff8e1; }
+
+    .file-icon { font-size: 20px; flex-shrink: 0; }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name { font-size: 13px; font-weight: 600; word-break: break-all; }
+    .file-meta { font-size: 12px; color: #666; margin-top: 2px; }
+    .file-schema { font-size: 12px; color: #1565c0; margin-top: 3px; }
+    .file-actions { flex-shrink: 0; display: flex; gap: 6px; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    }
+    .badge-changed { background: #ffebee; color: #b71c1c; }
+    .badge-ok { background: #e8f5e9; color: #2e7d32; }
+    .badge-auto { background: #fff3e0; color: #e65100; }
+
+    /* ---- DataComPy detail panel ---- */
+    .dc-detail {
+      display: none; margin-top: 10px; padding: 12px; background: #f6f8fa; border-radius: 6px;
+      font-size: 12px; line-height: 1.6;
+    }
+    .dc-detail.open { display: block; }
+    .dc-detail h4 { margin: 0 0 8px; font-size: 13px; }
+    .dc-section { margin-bottom: 10px; }
+    .dc-section-title { font-weight: 600; color: #333; margin-bottom: 4px; }
+    .dc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .dc-table th, .dc-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #e0e0e0; }
+    .dc-table th { background: #f0f0f0; font-weight: 600; }
+    .dc-table td.num { text-align: right; font-family: ui-monospace, monospace; }
+    .dc-table tr.mismatch td { background: #fff3e0; }
+
+    .merge-key-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .merge-key-row label { font-size: 12px; color: #555; white-space: nowrap; }
+    .merge-key-row input {
+      flex: 1; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 12px;
+    }
+
+    /* ---- footer ---- */
+    .modal-footer {
+      padding: 12px 18px; border-top: 1px solid #eee;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .footer-hint { font-size: 12px; color: #888; }
+
+    .progress-text { font-size: 13px; color: #555; }
+
+    /* scrollable body */
+    .modal-body { max-height: calc(90vh - 130px); }
+  </style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <h1>原型：保存快照时的数据审查流程</h1>
+  <button class="primary" id="btn-trigger">模拟点击「保存全局快照」</button>
+  <span style="font-size:12px;color:#888">← 点这里开始</span>
+</div>
+
+<!-- ============ 审查弹窗 ============ -->
+<div class="overlay" id="review-overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>保存快照 — 数据变化审查</h2>
+      <span class="progress-text" id="progress-text">0 / 3 已审查</span>
+    </div>
+    <div class="modal-body" id="review-body">
+
+      <p style="font-size:13px;color:#555;margin:0 0 12px">
+        检测到以下数据文件发生变化，请审查后再保存。DataFrame 格式需运行 DataComPy。
+      </p>
+
+      <ul class="file-list" id="file-list">
+
+        <!-- === File 1: CSV (DataFrame) === -->
+        <li class="file-item" data-file="orders_clean.csv" data-type="df">
+          <div class="file-icon">📊</div>
+          <div class="file-info">
+            <div class="file-name">data/clean/orders_clean.csv</div>
+            <div class="file-meta">
+              <span class="badge badge-changed">已变化</span>
+              大小: 2.1 MB → 2.4 MB
+            </div>
+            <div class="file-schema">
+              行数: 15,000 → 15,342 (+342) &nbsp;|&nbsp; 列: 新增 <b>discount_rate</b>
+            </div>
+            <div class="dc-detail" id="dc-orders">
+              <h4>DataComPy 结果</h4>
+              <div class="merge-key-row">
+                <label>Merge Key:</label>
+                <input type="text" placeholder="例如 order_id（留空则按行顺序）" value="order_id" />
+                <button class="btn-rerun" style="font-size:11px">重新比较</button>
+              </div>
+              <div class="dc-section">
+                <div class="dc-section-title">总览</div>
+                <table class="dc-table">
+                  <tr><th>指标</th><th>上一快照</th><th>当前磁盘</th></tr>
+                  <tr><td>行数</td><td class="num">15,000</td><td class="num">15,342</td></tr>
+                  <tr><td>列数</td><td class="num">8</td><td class="num">9</td></tr>
+                  <tr><td>匹配行</td><td class="num" colspan="2" style="text-align:center">14,856 (99.0%)</td></tr>
+                  <tr><td>仅在旧版本</td><td class="num" colspan="2" style="text-align:center">144</td></tr>
+                  <tr><td>仅在新版本</td><td class="num" colspan="2" style="text-align:center">486</td></tr>
+                </table>
+              </div>
+              <div class="dc-section">
+                <div class="dc-section-title">各列 Mismatch</div>
+                <table class="dc-table">
+                  <tr><th>列名</th><th>匹配率</th><th>最大差异</th></tr>
+                  <tr><td>order_id</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>user_id</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr class="mismatch"><td>amount</td><td class="num">97.2%</td><td class="num">12.50</td></tr>
+                  <tr class="mismatch"><td>quantity</td><td class="num">98.8%</td><td class="num">3</td></tr>
+                  <tr><td>product_id</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>region</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>order_date</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>status</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr style="color:#1565c0"><td>discount_rate <b>(新增)</b></td><td class="num">—</td><td class="num">—</td></tr>
+                </table>
+              </div>
+              <button class="primary" style="margin-top:8px;font-size:12px" onclick="markReviewed('orders_clean.csv', this)">
+                确认已审查 ✓
+              </button>
+            </div>
+          </div>
+          <div class="file-actions">
+            <button onclick="toggleDC('dc-orders', this)">运行 DataComPy</button>
+          </div>
+        </li>
+
+        <!-- === File 2: Parquet (DataFrame) === -->
+        <li class="file-item" data-file="summary.parquet" data-type="df">
+          <div class="file-icon">📊</div>
+          <div class="file-info">
+            <div class="file-name">data/output/summary.parquet</div>
+            <div class="file-meta">
+              <span class="badge badge-changed">已变化</span>
+              大小: 840 KB → 856 KB
+            </div>
+            <div class="file-schema">
+              行数: 200 → 207 (+7) &nbsp;|&nbsp; 列: 无变化 (5列)
+            </div>
+            <div class="dc-detail" id="dc-summary">
+              <h4>DataComPy 结果</h4>
+              <div class="merge-key-row">
+                <label>Merge Key:</label>
+                <input type="text" placeholder="留空则按行顺序" value="" />
+                <button class="btn-rerun" style="font-size:11px">重新比较</button>
+              </div>
+              <div class="dc-section">
+                <div class="dc-section-title">总览</div>
+                <table class="dc-table">
+                  <tr><th>指标</th><th>上一快照</th><th>当前磁盘</th></tr>
+                  <tr><td>行数</td><td class="num">200</td><td class="num">207</td></tr>
+                  <tr><td>列数</td><td class="num">5</td><td class="num">5</td></tr>
+                  <tr><td>匹配行</td><td class="num" colspan="2" style="text-align:center">200 (100%)</td></tr>
+                  <tr><td>仅在新版本</td><td class="num" colspan="2" style="text-align:center">7</td></tr>
+                </table>
+              </div>
+              <div class="dc-section">
+                <div class="dc-section-title">各列 Mismatch</div>
+                <table class="dc-table">
+                  <tr><th>列名</th><th>匹配率</th><th>最大差异</th></tr>
+                  <tr><td>category</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>total_sales</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>avg_price</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>item_count</td><td class="num">100%</td><td class="num">—</td></tr>
+                  <tr><td>report_date</td><td class="num">100%</td><td class="num">—</td></tr>
+                </table>
+              </div>
+              <button class="primary" style="margin-top:8px;font-size:12px" onclick="markReviewed('summary.parquet', this)">
+                确认已审查 ✓
+              </button>
+            </div>
+          </div>
+          <div class="file-actions">
+            <button onclick="toggleDC('dc-summary', this)">运行 DataComPy</button>
+          </div>
+        </li>
+
+        <!-- === File 3: pickle (non-DataFrame) === -->
+        <li class="file-item non-df" data-file="model.pkl" data-type="non-df">
+          <div class="file-icon">📦</div>
+          <div class="file-info">
+            <div class="file-name">models/model.pkl</div>
+            <div class="file-meta">
+              <span class="badge badge-auto">非表格</span>
+              大小: 4.7 MB → 4.9 MB
+            </div>
+            <div class="file-schema" style="color:#888">
+              无法解析为 DataFrame，仅显示文件级变化
+            </div>
+          </div>
+          <div class="file-actions">
+            <button onclick="markReviewed('model.pkl', this.closest('.file-item').querySelector('.badge'))">确认 ✓</button>
+          </div>
+        </li>
+
+      </ul>
+    </div>
+
+    <div class="modal-footer">
+      <div class="footer-hint" id="footer-hint">请审查全部变化文件后保存</div>
+      <div style="display:flex;gap:8px">
+        <button id="btn-cancel" onclick="closeReview()">取消</button>
+        <button class="primary" id="btn-confirm" disabled onclick="confirmSave()">
+          保存快照
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 保存成功提示 ============ -->
+<div id="toast" style="
+  position:fixed; bottom:16px; right:16px; max-width:420px;
+  padding:10px 14px; background:#222; color:#fff; border-radius:8px;
+  font-size:13px; display:none; z-index:200;
+"></div>
+
+<script>
+  const reviewed = new Set();
+  const totalDF = 2;
+  const totalNonDF = 1;
+  const totalFiles = totalDF + totalNonDF;
+
+  function toggleDC(id, btn) {
+    const el = document.getElementById(id);
+    if (el.classList.contains("open")) {
+      el.classList.remove("open");
+      btn.textContent = "运行 DataComPy";
+    } else {
+      el.classList.add("open");
+      btn.textContent = "收起";
+    }
+  }
+
+  function markReviewed(file, btnOrEl) {
+    reviewed.add(file);
+    const item = document.querySelector(`[data-file="${file}"]`);
+    item.classList.add("reviewed");
+    const badge = item.querySelector(".badge");
+    if (badge) {
+      badge.className = "badge badge-ok";
+      badge.textContent = "已审查 ✓";
+    }
+    updateProgress();
+  }
+
+  function updateProgress() {
+    const n = reviewed.size;
+    document.getElementById("progress-text").textContent = `${n} / ${totalFiles} 已审查`;
+    const btn = document.getElementById("btn-confirm");
+    if (n >= totalFiles) {
+      btn.disabled = false;
+      document.getElementById("footer-hint").textContent = "全部已审查，可以保存";
+      document.getElementById("footer-hint").style.color = "#2e7d32";
+    }
+  }
+
+  function closeReview() {
+    document.getElementById("review-overlay").classList.remove("open");
+  }
+
+  function confirmSave() {
+    closeReview();
+    const t = document.getElementById("toast");
+    t.textContent = "已保存全局快照 snap_20260519_001（含 3 个数据变化审查记录）";
+    t.style.display = "block";
+    setTimeout(() => { t.style.display = "none"; }, 5000);
+  }
+
+  document.getElementById("btn-trigger").addEventListener("click", () => {
+    reviewed.clear();
+    document.querySelectorAll(".file-item").forEach(el => {
+      el.classList.remove("reviewed");
+      const b = el.querySelector(".badge");
+      if (el.dataset.type === "df") { b.className = "badge badge-changed"; b.textContent = "已变化"; }
+      else { b.className = "badge badge-auto"; b.textContent = "非表格"; }
+    });
+    document.querySelectorAll(".dc-detail").forEach(el => el.classList.remove("open"));
+    document.getElementById("btn-confirm").disabled = true;
+    document.getElementById("footer-hint").textContent = "请审查全部变化文件后保存";
+    document.getElementById("footer-hint").style.color = "#888";
+    updateProgress();
+    document.getElementById("review-overlay").classList.add("open");
+  });
+</script>
+
+</body>
+</html>

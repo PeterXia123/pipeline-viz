@@ -1,0 +1,10 @@
+# E-commerce Analytics Pipeline
+# Supplement parser-discovered edges with cross-notebook data dependencies
+project_root: "."
+codes:
+  - path: notebooks/05_report.ipynb
+    inputs:
+      - data/models/centroids.json
+    outputs:
+      - reports/summary.json
+      - reports/segment_report.csv

@@ -1,0 +1,8 @@
+user_id,name,region,signup_date,tier
+U01,alice,east,2024-01-15,gold
+U02,bob,north,2024-03-22,silver
+U03,charlie,east,2024-06-10,bronze
+U04,diana,south,2024-08-01,gold
+U05,eric,west,2025-01-05,bronze
+U06,fiona,north,2025-04-20,silver
+U07,george,east,2025-09-12,bronze

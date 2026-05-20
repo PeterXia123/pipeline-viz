@@ -1,0 +1,12 @@
+order_id,product,qty,revenue,status,region
+1,Widget A,10,99.90,completed,US
+2,Widget B,5,49.50,completed,CA
+3,Gadget X,2,199.98,pending,US
+4,Widget A,7,69.93,completed,EU
+5,Gadget Y,1,149.99,completed,CA
+6,Widget B,12,119.88,completed,US
+7,Gadget X,3,299.97,cancelled,EU
+8,Widget A,4,39.96,completed,US
+9,Gadget Z,6,359.94,completed,CA
+10,Widget A,15,149.85,completed,EU
+11,Widget C,3,89.97,completed,US

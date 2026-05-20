@@ -1,0 +1,8 @@
+user_id,segment,total_spend_usd,order_count
+U01,frequent,203.78,3
+U02,vip,468.92,2
+U03,vip,482.72,2
+U04,vip,1144.98,2
+U05,casual,41.33,1
+U06,casual,109.85,1
+U07,high_value,344.86,1
