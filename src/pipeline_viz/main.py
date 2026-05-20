@@ -16,7 +16,15 @@ from pipeline_viz.graph_builder import build_graph
 from pipeline_viz.layout import compute_layout
 from pipeline_viz.models import GraphPayload
 from pipeline_viz.notebook_sanitize import sanitize_notebook_dict
-from pipeline_viz.paths import SCAN_SKIP_DIR_NAMES
+from pipeline_viz.io_tracer import (
+    filter_project_paths,
+    generate_trace_collect_code,
+    generate_trace_startup_code,
+    load_runtime_io,
+    parse_trace_output,
+    update_runtime_io,
+)
+from pipeline_viz.paths import SCAN_SKIP_DIR_NAMES, is_under_root
 from pipeline_viz.snapshot_store import (
     commit_highlights,
     commit_edge_highlights,
@@ -73,7 +81,8 @@ class _GraphCache:
         cached = self._entries.get(key)
         if cached is not None and cached[0] == fps:
             return cached[1]
-        payload = build_graph(root, manifest_path)
+        runtime_io = load_runtime_io(root)
+        payload = build_graph(root, manifest_path, runtime_io=runtime_io)
         self._entries[key] = (fps, payload)
         return payload
 
@@ -85,6 +94,12 @@ class _GraphCache:
         fps: dict[str, float] = {}
         if manifest_path and manifest_path.is_file():
             fps[str(manifest_path)] = manifest_path.stat().st_mtime
+        rio = root / ".pipeline-viz" / "runtime_io.json"
+        if rio.is_file():
+            try:
+                fps[str(rio)] = rio.stat().st_mtime
+            except OSError:
+                pass
         for pattern in ("*.ipynb", "*.py"):
             for p in root.rglob(pattern):
                 if any(part in SCAN_SKIP_DIR_NAMES for part in p.parts):
@@ -146,11 +161,7 @@ def _build_graph_or_400(root: Path):
         ) from e
 
 
-def _run_notebook_execute_inplace(project_root: Path, nb_path: Path) -> None:
-    """
-    在进程内执行 notebook 并写回原文件。
-    将内核 cwd 设为项目根（nbclient resources metadata.path），以便 `import pipeline` / `lib` 可解析。
-    """
+def _run_notebook_execute_inplace(project_root: Path, nb_path: Path) -> tuple[set[str], set[str]]:
     try:
         import nbformat
         from nbclient.exceptions import CellExecutionError
@@ -158,7 +169,7 @@ def _run_notebook_execute_inplace(project_root: Path, nb_path: Path) -> None:
     except ImportError as e:
         raise HTTPException(
             status_code=500,
-            detail="执行 notebook 需要 nbformat、nbconvert、ipykernel（如：pip install nbformat nbconvert ipykernel）。",
+            detail="执行 notebook 需要 nbformat、nbconvert、ipykernel。",
         ) from e
 
     timeout = int(os.environ.get("PIPELINE_VIZ_RUN_TIMEOUT", "600"))
@@ -167,6 +178,17 @@ def _run_notebook_execute_inplace(project_root: Path, nb_path: Path) -> None:
 
     with nb_path.open(encoding="utf-8") as f:
         notebook = nbformat.read(f, as_version=4)
+
+    startup_cell = nbformat.v4.new_code_cell(
+        generate_trace_startup_code(str(project_root.resolve()))
+    )
+    startup_cell.metadata["pipeline_viz_trace"] = True
+    collect_cell = nbformat.v4.new_code_cell(generate_trace_collect_code())
+    collect_cell.metadata["pipeline_viz_trace"] = True
+
+    notebook.cells.insert(0, startup_cell)
+    notebook.cells.append(collect_cell)
+
     ep = ExecutePreprocessor(
         timeout=timeout,
         startup_timeout=startup_timeout,
@@ -181,11 +203,24 @@ def _run_notebook_execute_inplace(project_root: Path, nb_path: Path) -> None:
         if len(detail) > 4000:
             detail = detail[:4000] + "\n…(truncated)"
         raise HTTPException(status_code=500, detail=detail) from e
+
+    traced_reads, traced_writes = parse_trace_output(
+        notebook.cells[-1].get("outputs", [])
+    )
+    traced_inputs = filter_project_paths(project_root, traced_reads)
+    traced_outputs = filter_project_paths(project_root, traced_writes)
+
+    notebook.cells = [
+        c for c in notebook.cells if not c.metadata.get("pipeline_viz_trace")
+    ]
+
     data = json.loads(nbformat.writes(notebook))
     sanitize_notebook_dict(data)
     notebook = nbformat.from_dict(data)
     with nb_path.open("w", encoding="utf-8") as f:
         nbformat.write(notebook, f)
+
+    return traced_inputs, traced_outputs
 
 
 @app.get("/")
@@ -223,7 +258,7 @@ def api_graph(
         if n.kind not in ("data", "notebook", "python"):
             continue
         p = (root / n.path).resolve()
-        if not str(p).startswith(str(root)) or not p.is_file():
+        if not is_under_root(root, p) or not p.is_file():
             missing_node_ids.append(n.id)
     layout = compute_layout(payload.nodes, payload.edges)
     pos = layout["positions"]
@@ -500,7 +535,7 @@ def api_data_datacompy(
         raise HTTPException(400, "仅支持 csv / tsv / parquet / pkl 等 DataFrame 文件")
 
     disk = (root / rel).resolve()
-    if not str(disk).startswith(str(root)) or not disk.is_file():
+    if not is_under_root(root, disk) or not disk.is_file():
         raise HTTPException(400, "磁盘上不存在该文件")
 
     latest = load_latest(root)
@@ -531,9 +566,19 @@ def api_run_notebook(
         raise HTTPException(403, "Notebook execution disabled. Set PIPELINE_VIZ_ALLOW_RUN=1")
     root = _resolve_root(project_root)
     nb = (root / notebook_rel).resolve()
-    if not str(nb).startswith(str(root)):
+    if not is_under_root(root, nb):
         raise HTTPException(400, "path escapes project root")
     if not nb.is_file() or nb.suffix.lower() != ".ipynb":
         raise HTTPException(400, "not a .ipynb file under project root")
-    _run_notebook_execute_inplace(root, nb)
-    return {"ok": True, "notebook": notebook_rel}
+    traced_inputs, traced_outputs = _run_notebook_execute_inplace(root, nb)
+    if traced_inputs or traced_outputs:
+        update_runtime_io(root, notebook_rel, traced_inputs, traced_outputs)
+    _graph_cache.invalidate(root)
+    return {
+        "ok": True,
+        "notebook": notebook_rel,
+        "traced_io": {
+            "inputs": sorted(traced_inputs),
+            "outputs": sorted(traced_outputs),
+        },
+    }
