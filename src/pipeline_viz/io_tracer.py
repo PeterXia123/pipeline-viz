@@ -163,3 +163,30 @@ def generate_trace_startup_code(project_root: str) -> str:
         except Exception:
             pass
     ''')
+
+
+_TRACE_PREFIX = "__PIPELINE_VIZ_TRACE__:"
+
+
+def generate_trace_collect_code() -> str:
+    return (
+        "import json as __pviz_json__\n"
+        f'print("{_TRACE_PREFIX}" + __pviz_json__.dumps(__pipeline_viz_io_trace__))\n'
+    )
+
+
+def parse_trace_output(cell_outputs: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    for out in cell_outputs:
+        if out.get("output_type") != "stream" or out.get("name") != "stdout":
+            continue
+        text = out.get("text", "")
+        if isinstance(text, list):
+            text = "".join(text)
+        for line in text.splitlines():
+            if line.startswith(_TRACE_PREFIX):
+                try:
+                    data = json.loads(line[len(_TRACE_PREFIX):])
+                    return data.get("reads", []), data.get("writes", [])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+    return [], []
