@@ -10,7 +10,7 @@ dependencies = [
   "nbformat>=5.10",
   "pyyaml>=6.0",
   "pydantic>=2.6",
-  "pandas>=2.0",
+  "pandas>=1.5.3",
   "datacompy>=0.14",
 ]
 

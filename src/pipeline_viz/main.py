@@ -840,6 +840,48 @@ def api_snapshot_precheck(project_root: Optional[str] = Query(default=None)):
     }
 
 
+_LAYOUT_FILENAME = "user_layout.json"
+
+
+def _layout_path(project_root: Path) -> Path:
+    return project_root / ".pipeline-viz" / _LAYOUT_FILENAME
+
+
+@app.get("/api/layout")
+def api_layout_get(project_root: Optional[str] = Query(default=None)):
+    root = _resolve_root(project_root)
+    lp = _layout_path(root)
+    if not lp.is_file():
+        return {"positions": {}}
+    try:
+        data = json.loads(lp.read_text(encoding="utf-8"))
+        return {"positions": data if isinstance(data, dict) else {}}
+    except (json.JSONDecodeError, OSError):
+        return {"positions": {}}
+
+
+@app.post("/api/layout")
+def api_layout_save(
+    project_root: Optional[str] = Query(default=None),
+    body: dict = Body(default_factory=dict),
+):
+    root = _resolve_root(project_root)
+    lp = _layout_path(root)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if lp.is_file():
+        try:
+            existing = json.loads(lp.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                existing = {}
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    positions = body.get("positions") or {}
+    existing.update(positions)
+    lp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "count": len(existing)}
+
+
 @app.post("/api/run-notebook")
 def api_run_notebook(
     notebook_rel: str = Query(..., description="Notebook path relative to project root"),

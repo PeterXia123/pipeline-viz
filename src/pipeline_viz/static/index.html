@@ -280,24 +280,33 @@
       return u.toString();
     }
 
-    const USER_LAYOUT_LS_PREFIX = "pipeline-viz:userLayout:v1:";
-    function userLayoutStorageKey(projectRoot) {
-      const r = String(projectRoot || "").trim();
-      if (!r) return null;
-      return USER_LAYOUT_LS_PREFIX + r;
-    }
-    function loadUserLayoutMap(projectRoot) {
-      const key = userLayoutStorageKey(projectRoot);
-      if (!key) return null;
+    let _serverLayoutCache = null;
+    async function loadUserLayoutMap(projectRoot) {
+      if (_serverLayoutCache) return _serverLayoutCache;
       try {
-        const s = localStorage.getItem(key);
-        if (!s) return null;
-        const o = JSON.parse(s);
-        if (!o || typeof o !== "object" || Array.isArray(o)) return null;
-        return o;
+        const res = await fetch(buildUrl("/api/layout"));
+        if (!res.ok) return null;
+        const data = await res.json();
+        _serverLayoutCache = data.positions || {};
+        return _serverLayoutCache;
       } catch (_) {
         return null;
       }
+    }
+    let _layoutSaveTimer = null;
+    let _layoutSavePending = {};
+    function saveUserLayout(positions) {
+      Object.assign(_layoutSavePending, positions);
+      if (_layoutSaveTimer) clearTimeout(_layoutSaveTimer);
+      _layoutSaveTimer = setTimeout(() => {
+        const toSave = _layoutSavePending;
+        _layoutSavePending = {};
+        fetch(buildUrl("/api/layout"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ positions: toSave }),
+        }).catch(() => {});
+      }, 500);
     }
     /** raw: [x,y] 或 {x,y}；缺省用 fallback */
     function pickXY(raw, fallback) {
@@ -696,6 +705,7 @@
     }
 
     async function loadGraph() {
+      _serverLayoutCache = null;
       const seq = ++loadGraphSeq;
       const extra = { _ts: Date.now() };
       if (viewSnapshotId) extra.view_snapshot_id = viewSnapshotId;
@@ -724,7 +734,7 @@
       const missing = new Set(data.missing_node_ids || []);
       const newNodes = new Set(data.new_node_ids || []);
       const layoutRoot = String(data.project_root || qs("#root").value.trim() || "");
-      const userLayout = loadUserLayoutMap(layoutRoot) || {};
+      const userLayout = (await loadUserLayoutMap(layoutRoot)) || {};
 
       const callCountByNb = {};
       g.edges.forEach((e) => {
@@ -900,16 +910,14 @@
       });
       network.on("dragEnd", (p) => {
         if (!p.nodes || !p.nodes.length) return;
-        const root = qs("#root").value.trim();
-        const key = userLayoutStorageKey(root);
-        if (!key) return;
         try {
           const moved = network.getPositions(p.nodes);
-          const prev = loadUserLayoutMap(root) || {};
+          const positions = {};
           for (const [id, xy] of Object.entries(moved)) {
-            prev[id] = [Number(xy.x) || 0, Number(xy.y) || 0];
+            positions[id] = [Number(xy.x) || 0, Number(xy.y) || 0];
           }
-          localStorage.setItem(key, JSON.stringify(prev));
+          if (_serverLayoutCache) Object.assign(_serverLayoutCache, positions);
+          saveUserLayout(positions);
         } catch (_) {}
       });
 
