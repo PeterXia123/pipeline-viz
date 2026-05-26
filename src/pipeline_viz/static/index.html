@@ -718,6 +718,9 @@
       }
       const data = await res.json();
       if (seq !== loadGraphSeq) return;
+      if (data.project_root && !qs("#root").value.trim()) {
+        qs("#root").value = data.project_root;
+      }
       const echoed =
         data.view_snapshot_id != null && String(data.view_snapshot_id).trim() !== ""
           ? String(data.view_snapshot_id).trim()
